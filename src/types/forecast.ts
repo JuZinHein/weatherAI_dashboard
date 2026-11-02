@@ -32,6 +32,7 @@ export interface CityForecastStep {
   temperatureC: number;
   windKmh: number;
   isFuture: boolean;
+  metrics?: Record<string, number>;
 }
 
 export interface CityInfo {
@@ -78,8 +79,8 @@ export interface ForecastDataset {
   benchmarkCityTrendUrl?: string;
 }
 
-export type ViewMode = 'satellite_radar' | 'globe_3d' | 'dual_fcn' | 'city_trends';
-export type MapLayer = 'temperature' | 'wind' | 'satellite';
+export type ViewMode = 'satellite_radar' | 'globe_3d' | 'city_trends';
+export type MapLayer = 'temperature' | 'wind' | 'satellite' | string;
 
 export interface StormAlert {
   alert_active: boolean;

@@ -69,17 +69,6 @@ export const ShowcaseHeader: React.FC<ShowcaseHeaderProps> = ({
             <span>{BURMESE_STRINGS.satelliteRadar2D}</span>
           </button>
 
-          <button
-            onClick={() => onViewModeChange('dual_fcn')}
-            className={`whitespace-nowrap transition-colors flex items-center gap-2 ${
-              viewMode === 'dual_fcn'
-                ? 'text-emerald-400 font-semibold'
-                : 'text-slate-300 hover:text-white'
-            }`}
-          >
-            <Sparkles className="h-4 w-4" />
-            <span>{BURMESE_STRINGS.dualComparison}</span>
-          </button>
 
           <button
             onClick={() => onViewModeChange('city_trends')}

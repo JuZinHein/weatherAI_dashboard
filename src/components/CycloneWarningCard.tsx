@@ -14,7 +14,7 @@ export const CycloneWarningCard: React.FC<CycloneWarningCardProps> = ({
   onFocusStorm,
   onClose,
 }) => {
-  const [isMinimized, setIsMinimized] = useState<boolean>(false);
+  const [isMinimized, setIsMinimized] = useState<boolean>(true);
 
   if (!alert.alert_active) return null;
 
@@ -25,10 +25,10 @@ export const CycloneWarningCard: React.FC<CycloneWarningCardProps> = ({
 
   if (isMinimized) {
     return (
-      <div className="fixed bottom-24 sm:bottom-28 right-4 sm:right-6 z-40 animate-in fade-in slide-in-from-bottom-3 duration-200">
+      <div className="fixed bottom-40 right-6 sm:bottom-44 sm:right-8 z-40 animate-in fade-in slide-in-from-bottom-3 duration-200">
         <button
           onClick={() => setIsMinimized(false)}
-          className="flex items-center gap-2.5 rounded-full border border-rose-500/50 bg-rose-950/90 px-4 py-2 text-xs font-bold text-white shadow-2xl backdrop-blur-xl transition hover:bg-rose-900/90 hover:border-rose-400"
+          className="flex items-center gap-2.5 rounded-full border border-rose-500/60 bg-rose-950/95 px-4 py-2 text-xs font-bold text-white shadow-2xl backdrop-blur-xl transition hover:bg-rose-900/95 hover:border-rose-400 cursor-pointer"
         >
           <span className="relative flex h-2.5 w-2.5">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-75" />
@@ -42,7 +42,7 @@ export const CycloneWarningCard: React.FC<CycloneWarningCardProps> = ({
   }
 
   return (
-    <div className="fixed bottom-24 sm:bottom-28 right-4 sm:right-6 z-40 w-[92vw] sm:w-[410px] max-w-[calc(100vw-2rem)] rounded-2xl border border-rose-500/40 bg-black/85 p-4 text-white shadow-[0_0_35px_rgba(244,63,94,0.28)] backdrop-blur-2xl animate-in fade-in slide-in-from-bottom-4 duration-300">
+    <div className="fixed bottom-40 right-6 sm:bottom-44 sm:right-8 z-40 w-[92vw] sm:w-[410px] max-w-[calc(100vw-2rem)] rounded-2xl border border-rose-500/40 bg-black/90 p-4 text-white shadow-[0_0_35px_rgba(244,63,94,0.32)] backdrop-blur-2xl animate-in fade-in slide-in-from-bottom-4 duration-300">
       {/* Header with pulsing radar beacon */}
       <div className="flex items-start justify-between gap-3 border-b border-rose-500/20 pb-2.5">
         <div className="flex items-center gap-2.5">

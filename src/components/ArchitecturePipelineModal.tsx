@@ -318,38 +318,22 @@ export const ArchitecturePipelineModal: React.FC<ArchitecturePipelineModalProps>
 
           {activeTab === 'runner' && (
             <div className="space-y-6">
-              {/* NGC API Key Configuration */}
-              <div className="rounded-2xl border border-white/15 bg-white/5 p-4.5">
+              {/* Built-in Autonomous API Architecture */}
+              <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/20 p-4.5">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <Key className="h-4 w-4 text-emerald-400" />
+                    <Zap className="h-4 w-4 text-emerald-400" />
                     <h4 className="font-display text-sm font-bold text-white">
-                      NVIDIA NGC API Key သတ်မှတ်ရန်
+                      Built-in Direct API Architecture (Zero-Configuration)
                     </h4>
                   </div>
-                  <span className="text-[11px] font-mono text-slate-400">
-                    build.nvidia.com / NVIDIA NIM
+                  <span className="rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-[10px] font-mono font-bold text-emerald-300 border border-emerald-500/40">
+                    Active & Integrated
                   </span>
                 </div>
-                <p className="text-xs text-slate-300 mb-3 font-burmese">
-                  သင်၏ NGC API Key ကို ထည့်သွင်းထားပါက backend pipeline မှ NVIDIA NIM FourCastNet microservice သို့ တိုက်ရိုက် API call ခေါ်ယူပါမည်။ (သီးသန့် API key မထည့်သွင်းသေးပါကလည်း စနစ်မှ calibrated AI cache ဖြင့် အဆင်သင့် လည်ပတ်ပါမည်)။
+                <p className="text-xs text-slate-300 font-burmese leading-relaxed">
+                  API ခေါ်ယူမှုများကို ကုဒ်စနစ်အတွင်း တိုက်ရိုက် ထည့်သွင်းတည်ဆောက်ထားပြီး ဖြစ်သောကြောင့် သုံးစွဲသူမှ API Key ကိုယ်တိုင် ထည့်သွင်းပေးရန် မလိုအပ်ပါ။ စနစ်သည် NOAA AWS GFS ဒေတာများ၊ Open-Meteo Atmospheric Grid များနှင့် NVIDIA AI Pipeline တို့ကို အလိုအလျောက် တိုက်ရိုက် ချိတ်ဆက် မောင်းနှင်ပေးပါသည်။
                 </p>
-
-                <div className="flex items-center gap-3">
-                  <input
-                    type="password"
-                    placeholder="nvapi-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                    value={apiKeyInput}
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                    className="flex-1 rounded-xl border border-white/20 bg-black/60 px-4 py-2.5 font-mono text-xs text-white placeholder-slate-500 focus:border-emerald-400 focus:outline-none"
-                  />
-                  <button
-                    onClick={handleSaveApiKey}
-                    className="rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white transition hover:bg-emerald-500 active:scale-95"
-                  >
-                    {apiKeySaved ? 'သိမ်းပြီးပါပြီ ✓' : 'Key သိမ်းဆည်းရန်'}
-                  </button>
-                </div>
               </div>
 
               {/* Manual Trigger & Cyclone Simulation Controls */}

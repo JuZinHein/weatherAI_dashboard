@@ -1,18 +1,36 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { CityInfo, ForecastDataset, MapLayer, StormAlert } from '../types/forecast';
 import {
   REGION_BOUNDS,
   MYANMAR_BORDER_POINTS,
   getTemperatureColor,
   getWindColor,
-  geoToCanvas,
-  canvasToGeo,
   sampleGrid,
-  getTrueRatioMapBounds,
 } from '../utils/geo';
+import {
+  BAY_OF_BENGAL_COAST,
+  BANGLADESH_BORDER,
+  THAILAND_COASTLINE,
+  REGIONAL_INLAND_BORDERS,
+} from '../data/neighborBorders';
+import {
+  WEATHER_CATEGORIES,
+  WEATHER_VARIABLES,
+  WEATHER_VARIABLES_BY_ID,
+  WeatherVariableDef,
+} from '../services/weatherVariables';
 import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from '../utils/burmese';
 import { CityWeatherPopup3D } from './CityWeatherPopup3D';
-import { Layers, Wind, Eye, ZoomIn, ZoomOut, RotateCcw, Flame, Radio, Palette, Scaling, Maximize2 } from 'lucide-react';
+import {
+  Wind,
+  ZoomIn,
+  ZoomOut,
+  RotateCcw,
+  Palette,
+  Maximize2,
+  ChevronDown,
+  Radio,
+} from 'lucide-react';
 
 interface ForecastMap2DProps {
   dataset: ForecastDataset;
@@ -33,17 +51,25 @@ interface WindParticle {
   age: number;
   maxAge: number;
   speed: number;
+  flowAngle: number;
 }
 
-const BURMESE_NEIGHBORS = [
-  { name: 'ဘင်္ဂလားပင်လယ်အော်', lon: 93.2, lat: 14.8, type: 'sea' },
-  { name: 'ကပ္ပလီပင်လယ်', lon: 96.5, lat: 11.2, type: 'sea' },
-  { name: 'မုတ္တမပင်လယ်ကွေ့', lon: 97.2, lat: 16.0, type: 'sea' },
-  { name: 'အိန္ဒိယ', lon: 93.0, lat: 25.5, type: 'country' },
-  { name: 'ဘင်္ဂလားဒေ့ရှ်', lon: 92.4, lat: 23.0, type: 'country' },
-  { name: 'တရုတ်', lon: 99.8, lat: 26.0, type: 'country' },
-  { name: 'လာအို', lon: 101.2, lat: 20.5, type: 'country' },
-  { name: 'ထိုင်း', lon: 99.8, lat: 17.5, type: 'country' },
+interface RainParticle {
+  lat: number;
+  lon: number;
+  length: number;
+  speed: number;
+}
+
+const REGION_LABELS = [
+  { name: 'ဘင်္ဂလားပင်လယ်အော်', lon: 92.5, lat: 14.8, type: 'sea' },
+  { name: 'ကပ္ပလီပင်လယ်', lon: 95.8, lat: 10.8, type: 'sea' },
+  { name: 'မုတ္တမပင်လယ်ကွေ့', lon: 97.2, lat: 16.2, type: 'sea' },
+  { name: 'အိန္ဒိယ', lon: 93.2, lat: 25.5, type: 'country' },
+  { name: 'ဘင်္ဂလားဒေ့ရှ်', lon: 91.5, lat: 23.2, type: 'country' },
+  { name: 'တရုတ်', lon: 99.8, lat: 25.8, type: 'country' },
+  { name: 'လာအို', lon: 101.8, lat: 20.2, type: 'country' },
+  { name: 'ထိုင်း', lon: 99.5, lat: 16.5, type: 'country' },
 ];
 
 export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
@@ -61,22 +87,41 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // High-resolution calibrated daytime satellite texture (exact geographic bounds matching 3D globe)
-  const dayImgRef = useRef<HTMLImageElement | null>(null);
+  // Selected weather variable for the 2D layer
+  const [selectedVariableId, setSelectedVariableId] = useState<string>('temperature_2m');
+  const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
 
-  // Matplotlib transparent PNG overlay support (RdYlBu_r & viridis)
-  const [useMatplotlibOverlay, setUseMatplotlibOverlay] = useState<boolean>(true);
+  // Matplotlib overlay toggle
+  const [useMatplotlibOverlay, setUseMatplotlibOverlay] = useState<boolean>(false);
   const matplotlibImgRef = useRef<HTMLImageElement | null>(null);
 
+  // High-Resolution Satellite Base Image
+  const satelliteImgRef = useRef<HTMLImageElement | null>(null);
+  const [satelliteLoaded, setSatelliteLoaded] = useState(false);
+
+  // Esri Satellite Tile Cache for high-res zooming
+  const tileCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const pendingTilesRef = useRef<Set<string>>(new Set());
+
+  // Load NASA/Blue Marble Global Satellite Base Map
+  useEffect(() => {
+    const img = new Image();
+    img.src = '/textures/earth_hd.jpg';
+    img.onload = () => {
+      satelliteImgRef.current = img;
+      setSatelliteLoaded(true);
+    };
+  }, []);
+
+  // Lead hour string for Matplotlib overlays
   const hourStr = String(dataset.leadHours[currentStepIndex] ?? 0).padStart(2, '0');
-  const overlayUrl = activeLayer === 'temperature'
-    ? `/forecast_data/layers/temp_${hourStr}h.png`
-    : activeLayer === 'wind'
-    ? `/forecast_data/layers/wind_${hourStr}h.png`
-    : null;
+  const overlayUrl =
+    selectedVariableId.startsWith('wind') || activeLayer === 'wind'
+      ? `/forecast_data/layers/wind_${hourStr}h.png`
+      : `/forecast_data/layers/temp_${hourStr}h.png`;
 
   useEffect(() => {
-    if (!overlayUrl) {
+    if (!useMatplotlibOverlay) {
       matplotlibImgRef.current = null;
       return;
     }
@@ -85,29 +130,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     img.onload = () => {
       matplotlibImgRef.current = img;
     };
-  }, [overlayUrl]);
-
-  // Center on coordinates if requested (e.g. from CycloneWarningCard)
-  useEffect(() => {
-    if (focusCoords && containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const padding = 20;
-      const targetPos = geoToCanvas(focusCoords.lat, focusCoords.lon, rect.width, rect.height, padding);
-      setPan({
-        x: (rect.width / 2 - targetPos.x) * 1.5,
-        y: (rect.height / 2 - targetPos.y) * 1.5,
-      });
-      setZoom(2.2);
-    }
-  }, [focusCoords]);
-
-  useEffect(() => {
-    const dayImg = new Image();
-    dayImg.src = '/textures/earth_hd.jpg';
-    dayImg.onload = () => {
-      dayImgRef.current = dayImg;
-    };
-  }, []);
+  }, [overlayUrl, useMatplotlibOverlay]);
 
   const [activePopupCity, setActivePopupCity] = useState<CityInfo | null>(null);
 
@@ -117,35 +140,66 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     y: number;
     lat: number;
     lon: number;
+    value: number;
     temp: number;
     wind: number;
   } | null>(null);
 
-  // Smooth Zoom & Pan (Google Earth 2D style)
+  // Smooth Zoom & Pan
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const panStartRef = useRef({ x: 0, y: 0 });
 
-  // Pre-generate wind particles
+  // Direct 1:1 dragging refs (avoids React state latency and lost pointer captures)
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef({ x: 0, y: 0 });
+  const dragDistRef = useRef(0);
+
+  // Focus coordinates effect
+  useEffect(() => {
+    if (focusCoords && containerRef.current) {
+      setZoom(1.9);
+      setPan({ x: 70, y: 50 });
+    }
+  }, [focusCoords]);
+
+  // Pre-generate wind streamlines
   const particlesRef = useRef<WindParticle[]>([]);
   useEffect(() => {
     const particles: WindParticle[] = [];
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < 480; i++) {
       particles.push({
-        lat: REGION_BOUNDS.minLat + Math.random() * (REGION_BOUNDS.maxLat - REGION_BOUNDS.minLat),
-        lon: REGION_BOUNDS.minLon + Math.random() * (REGION_BOUNDS.maxLon - REGION_BOUNDS.minLon),
-        age: Math.floor(Math.random() * 80),
-        maxAge: 70 + Math.floor(Math.random() * 50),
-        speed: 0.04 + Math.random() * 0.05,
+        lat: 8.5 + Math.random() * 21.5,
+        lon: 88.0 + Math.random() * 16.0,
+        age: Math.floor(Math.random() * 100),
+        maxAge: 70 + Math.floor(Math.random() * 60),
+        speed: 0.035 + Math.random() * 0.045,
+        flowAngle: 0.75 + (Math.random() - 0.5) * 0.4, // SW to NE prevailing airflow
       });
     }
     particlesRef.current = particles;
   }, []);
 
+  // Pre-generate rain particles for precipitation layers
+  const rainParticlesRef = useRef<RainParticle[]>([]);
+  useEffect(() => {
+    const rain: RainParticle[] = [];
+    for (let i = 0; i < 180; i++) {
+      rain.push({
+        lat: 13.0 + Math.random() * 14.0,
+        lon: 92.0 + Math.random() * 9.0,
+        length: 8 + Math.random() * 12,
+        speed: 0.12 + Math.random() * 0.16,
+      });
+    }
+    rainParticlesRef.current = rain;
+  }, []);
+
   const currentTempGrid = dataset.temperatureGrid[currentStepIndex] || dataset.temperatureGrid[0];
   const currentWindGrid = dataset.windGrid[currentStepIndex] || dataset.windGrid[0];
+  const currentVarDef: WeatherVariableDef =
+    WEATHER_VARIABLES_BY_ID[selectedVariableId] || WEATHER_VARIABLES[0];
 
+  // Canvas render loop
   useEffect(() => {
     let animId: number;
     let pulseTime = 0;
@@ -166,327 +220,691 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     const width = rect.width;
     const height = rect.height;
 
-    // Offscreen canvas for forecast numerical raster (41x81)
-    const offscreen = document.createElement('canvas');
-    offscreen.width = 41;
-    offscreen.height = 81;
-    const offCtx = offscreen.getContext('2d');
-    if (offCtx) {
-      const imgData = offCtx.createImageData(41, 81);
-      const data = imgData.data;
+    // Viewport Geographic Mapping centered on Myanmar
+    const baseCenterLat = 19.5;
+    const baseCenterLon = 96.5;
+    const baseLatSpan = 20.0;
 
-      for (let r = 0; r < 81; r++) {
-        for (let c = 0; c < 41; c++) {
-          const idx = (r * 41 + c) * 4;
-          const tempVal = currentTempGrid[r][c];
-          const windVal = currentWindGrid[r][c];
+    const latSpan = baseLatSpan / zoom;
+    const lonSpan = latSpan * (width / height);
 
-          let rgb: [number, number, number];
-          if (activeLayer === 'temperature') {
-            rgb = getTemperatureColor(tempVal);
-          } else if (activeLayer === 'wind') {
-            rgb = getWindColor(windVal);
-          } else {
-            // Doppler satellite radar precipitation echo
-            if (windVal > 16 || (tempVal > 31 && r > 20)) {
-              rgb = [239, 68, 68];
-            } else if (windVal > 13) {
-              rgb = [245, 158, 11];
-            } else if (windVal > 8) {
-              rgb = [34, 197, 94];
-            } else {
-              rgb = [56, 189, 248];
-            }
-          }
+    // Pan translation: directly proportional to drag delta
+    const centerLon = baseCenterLon - (pan.x / width) * lonSpan;
+    const centerLat = baseCenterLat + (pan.y / height) * latSpan;
 
-          data[idx] = rgb[0];
-          data[idx + 1] = rgb[1];
-          data[idx + 2] = rgb[2];
-          data[idx + 3] = activeLayer === 'satellite' ? 95 : 135;
-        }
-      }
-      offCtx.putImageData(imgData, 0, 0);
-    }
+    const minLon = centerLon - lonSpan / 2;
+    const maxLon = centerLon + lonSpan / 2;
+    const minLat = centerLat - latSpan / 2;
+    const maxLat = centerLat + latSpan / 2;
+
+    // Coordinate conversion helpers
+    const toScreen = (lat: number, lon: number) => {
+      const x = ((lon - minLon) / lonSpan) * width;
+      const y = ((maxLat - lat) / latSpan) * height;
+      return { x, y };
+    };
 
     const render = () => {
       pulseTime += 0.035;
       ctx.save();
       ctx.scale(dpr, dpr);
 
-      ctx.fillStyle = '#030712';
+      // 1. Deep Space/Ocean Base
+      ctx.fillStyle = '#030816';
       ctx.fillRect(0, 0, width, height);
 
-      ctx.save();
-      ctx.translate(pan.x, pan.y);
-      ctx.translate(width / 2, height / 2);
-      ctx.scale(zoom, zoom);
-      ctx.translate(-width / 2, -height / 2);
-
-      const padding = 24;
-      const mapBox = getTrueRatioMapBounds(width, height, padding);
-      const { x: mapX, y: mapY, width: mapW, height: mapH } = mapBox;
-
-      // 1. Draw Proper High-Resolution Calibrated Daytime Satellite Map Underlay in True Ratio (1:2)
-      const activeSatelliteImg = dayImgRef.current;
-      if (activeSatelliteImg && activeSatelliteImg.complete) {
-        // Mathematically exact sub-rectangle crop for Lat 9°N-29°N, Lon 92°E-102°E
-        // Exactly matches 360° x 180° equirectangular Three.js globe geometry
-        const sx = ((REGION_BOUNDS.minLon + 180) / 360) * activeSatelliteImg.width;
-        const sy = ((90 - REGION_BOUNDS.maxLat) / 180) * activeSatelliteImg.height;
-        const sWidth = ((REGION_BOUNDS.maxLon - REGION_BOUNDS.minLon) / 360) * activeSatelliteImg.width;
-        const sHeight = ((REGION_BOUNDS.maxLat - REGION_BOUNDS.minLat) / 180) * activeSatelliteImg.height;
-
-        ctx.drawImage(activeSatelliteImg, sx, sy, sWidth, sHeight, mapX, mapY, mapW, mapH);
-      } else {
-        ctx.fillStyle = '#0a192f';
-        ctx.fillRect(mapX, mapY, mapW, mapH);
-      }
-
-      // 2. Draw Numerical Forecast Radar / Heat Layer in exact True Ratio (1:2)
-      // Seamlessly switches between high-res Matplotlib PNG overlay (RdYlBu_r / viridis) or native canvas grid
-      const mplImg = matplotlibImgRef.current;
-      if (useMatplotlibOverlay && mplImg && mplImg.complete && activeLayer !== 'satellite') {
-        ctx.save();
-        ctx.globalAlpha = 0.70;
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(mplImg, mapX, mapY, mapW, mapH);
-        ctx.restore();
-      } else {
+      // 2. High-Quality Satellite Photographic Base Map
+      const satImg = satelliteImgRef.current;
+      if (satImg && satImg.complete && satImg.naturalWidth > 0) {
         ctx.save();
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.globalAlpha = activeLayer === 'satellite' ? 0.52 : 0.72;
-        ctx.drawImage(offscreen, mapX, mapY, mapW, mapH);
+
+        // Equirectangular mapping: satImg covers [-180, 180] lon and [90, -90] lat
+        const srcX = ((minLon + 180) / 360) * satImg.naturalWidth;
+        const srcY = ((90 - maxLat) / 180) * satImg.naturalHeight;
+        const srcW = ((maxLon - minLon) / 360) * satImg.naturalWidth;
+        const srcH = ((maxLat - minLat) / 180) * satImg.naturalHeight;
+
+        ctx.drawImage(satImg, srcX, srcY, srcW, srcH, 0, 0, width, height);
+
+        // Subtle topographic contrast enhancement
+        ctx.fillStyle = 'rgba(2, 6, 23, 0.20)';
+        ctx.fillRect(0, 0, width, height);
         ctx.restore();
       }
 
-      // 3. Graticule Lat/Lon Lines (Bounded strictly within True Ratio map frame)
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.16)';
-      ctx.lineWidth = 1;
-      ctx.font = '10px "JetBrains Mono", monospace';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+      // 2b. High-Resolution Esri World Imagery Tile Overlay (for crisp terrain upon zooming)
+      if (zoom >= 1.2) {
+        const z = Math.min(7, Math.max(4, Math.floor(3.8 + Math.log2(zoom))));
+        const numTiles = 1 << z;
+        const minTx = Math.max(0, Math.floor(((minLon + 180) / 360) * numTiles));
+        const maxTx = Math.min(numTiles - 1, Math.floor(((maxLon + 180) / 360) * numTiles));
 
-      for (let lat = 10; lat <= 28; lat += 2) {
-        const { y } = geoToCanvas(lat, 92, width, height, padding);
-        ctx.beginPath();
-        ctx.moveTo(mapX, y);
-        ctx.lineTo(mapX + mapW, y);
-        ctx.stroke();
-        ctx.fillText(`${toBurmeseNumber(lat)}°N`, mapX + 6, y - 4);
-      }
+        // Mercator Y bounds
+        const radMax = (Math.min(85, maxLat) * Math.PI) / 180;
+        const radMin = (Math.max(-85, minLat) * Math.PI) / 180;
+        const minTy = Math.max(0, Math.floor(((1 - Math.log(Math.tan(radMax) + 1 / Math.cos(radMax)) / Math.PI) / 2) * numTiles));
+        const maxTy = Math.min(numTiles - 1, Math.floor(((1 - Math.log(Math.tan(radMin) + 1 / Math.cos(radMin)) / Math.PI) / 2) * numTiles));
 
-      for (let lon = 94; lon <= 102; lon += 2) {
-        const { x } = geoToCanvas(9, lon, width, height, padding);
-        ctx.beginPath();
-        ctx.moveTo(x, mapY);
-        ctx.lineTo(x, mapY + mapH);
-        ctx.stroke();
-        ctx.fillText(`${toBurmeseNumber(lon)}°E`, x + 3, mapY + mapH - 8);
-      }
+        ctx.save();
+        ctx.globalAlpha = 0.88;
+        for (let tx = minTx; tx <= maxTx; tx++) {
+          for (let ty = minTy; ty <= maxTy; ty++) {
+            const key = `${z}/${ty}/${tx}`;
+            const tileImg = tileCacheRef.current.get(key);
 
-      // Outer boundary frame with cyan accent glow
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(mapX, mapY, mapW, mapH);
+            // Tile geo bounds
+            const tileMinLon = (tx / numTiles) * 360 - 180;
+            const tileMaxLon = ((tx + 1) / numTiles) * 360 - 180;
+            const n1 = Math.PI - (2 * Math.PI * ty) / numTiles;
+            const tileMaxLat = (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n1) - Math.exp(-n1)));
+            const n2 = Math.PI - (2 * Math.PI * (ty + 1)) / numTiles;
+            const tileMinLat = (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n2) - Math.exp(-n2)));
 
-      // 4. Glowing Myanmar National Boundary Outline
-      ctx.beginPath();
-      MYANMAR_BORDER_POINTS.forEach(([lon, lat], i) => {
-        const pos = geoToCanvas(lat, lon, width, height, padding);
-        if (i === 0) ctx.moveTo(pos.x, pos.y);
-        else ctx.lineTo(pos.x, pos.y);
-      });
-      ctx.closePath();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-      ctx.lineWidth = 2;
-      ctx.shadowColor = '#38bdf8';
-      ctx.shadowBlur = 8;
-      ctx.stroke();
-      ctx.shadowBlur = 0;
+            const p1 = toScreen(tileMaxLat, tileMinLon);
+            const p2 = toScreen(tileMinLat, tileMaxLon);
 
-      // 5. Regional & Sea Labels in Burmese
-      BURMESE_NEIGHBORS.forEach((lbl) => {
-        const p = geoToCanvas(lbl.lat, lbl.lon, width, height, padding);
-        if (lbl.type === 'sea') {
-          ctx.fillStyle = 'rgba(186, 230, 253, 0.9)';
-          ctx.font = 'italic 600 13px "Noto Sans Myanmar", sans-serif';
-        } else {
-          ctx.fillStyle = 'rgba(241, 245, 249, 0.7)';
-          ctx.font = '600 12px "Noto Sans Myanmar", sans-serif';
+            if (tileImg && tileImg.complete) {
+              ctx.drawImage(tileImg, p1.x, p1.y, p2.x - p1.x + 0.5, p2.y - p1.y + 0.5);
+            } else if (!pendingTilesRef.current.has(key)) {
+              pendingTilesRef.current.add(key);
+              const img = new Image();
+              img.crossOrigin = 'anonymous';
+              img.src = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${ty}/${tx}`;
+              img.onload = () => {
+                tileCacheRef.current.set(key, img);
+                pendingTilesRef.current.delete(key);
+              };
+              img.onerror = () => {
+                pendingTilesRef.current.delete(key);
+              };
+            }
+          }
         }
-        ctx.shadowColor = '#000000';
+        ctx.restore();
+      }
+
+      // 3. Matplotlib Raw Overlay (If explicitly toggled)
+      if (useMatplotlibOverlay && matplotlibImgRef.current && matplotlibImgRef.current.complete) {
+        const pTopLeft = toScreen(REGION_BOUNDS.maxLat, REGION_BOUNDS.minLon);
+        const pBotRight = toScreen(REGION_BOUNDS.minLat, REGION_BOUNDS.maxLon);
+        ctx.save();
+        ctx.globalAlpha = 0.65;
+        ctx.drawImage(matplotlibImgRef.current, pTopLeft.x, pTopLeft.y, pBotRight.x - pTopLeft.x, pBotRight.y - pTopLeft.y);
+        ctx.restore();
+      }
+
+      // ==========================================================
+      // 4. ANIMATED GRAPHICS & DYNAMIC WEATHER OVERLAYS PER VARIABLE
+      // ==========================================================
+
+      // (A) HEAT & TEMPERATURE ANIMATION (Thermal Radiance + Heat Shimmer Waves)
+      if (
+        selectedVariableId.startsWith('temperature') ||
+        selectedVariableId === 'apparent_temperature' ||
+        selectedVariableId === 'vapour_pressure_deficit'
+      ) {
+        ctx.save();
+        // Central Myanmar Thermal Radiance Bloom (Chauk / Mandalay / Magway high heat zone)
+        const heatCenters = [
+          { lat: 21.3, lon: 95.0, r: 160, temp: 37, label: '၃၇°C' },
+          { lat: 21.9, lon: 96.1, r: 140, temp: 35, label: '၃၅°C' },
+          { lat: 16.8, lon: 96.1, r: 120, temp: 33, label: '၃၃°C' },
+          { lat: 20.1, lon: 92.9, r: 110, temp: 31, label: '၃၁°C' },
+        ];
+
+        heatCenters.forEach((hc) => {
+          const pt = toScreen(hc.lat, hc.lon);
+          const rad = hc.r * (zoom * 0.85);
+          const pulse = Math.sin(pulseTime * 2 + hc.lat) * 8;
+
+          // Glowing thermal radiance radial gradient
+          const grad = ctx.createRadialGradient(pt.x, pt.y, 10, pt.x, pt.y, rad + pulse);
+          grad.addColorStop(0, 'rgba(239, 68, 68, 0.45)');
+          grad.addColorStop(0.35, 'rgba(245, 158, 11, 0.30)');
+          grad.addColorStop(0.7, 'rgba(251, 191, 36, 0.15)');
+          grad.addColorStop(1, 'rgba(245, 158, 11, 0.0)');
+
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, rad + pulse, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Isothermal Contour Line
+          ctx.strokeStyle = 'rgba(254, 215, 170, 0.50)';
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, (rad + pulse) * 0.65, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        });
+
+        // Atmospheric Heat Haze Shimmer Waves (Animated Undulations)
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.22)';
+        ctx.lineWidth = 1.4;
+        const p1 = toScreen(23.5, 93.5);
+        const p2 = toScreen(19.0, 97.5);
+        const startY = Math.min(p1.y, p2.y);
+        const endY = Math.max(p1.y, p2.y);
+
+        for (let y = startY; y <= endY; y += 32) {
+          ctx.beginPath();
+          for (let x = p1.x - 40; x <= p2.x + 40; x += 12) {
+            const waveY = y + Math.sin(pulseTime * 2.8 + x * 0.035 + y * 0.05) * 4;
+            if (x === p1.x - 40) ctx.moveTo(x, waveY);
+            else ctx.lineTo(x, waveY);
+          }
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // (B) PRECIPITATION / RAIN / DOPPLER RADAR ANIMATION
+      else if (
+        selectedVariableId === 'radar_reflectivity' ||
+        selectedVariableId.startsWith('precipitation') ||
+        selectedVariableId === 'rain' ||
+        selectedVariableId === 'showers'
+      ) {
+        ctx.save();
+        // Radar Sweep Radar Station (Yangon / Naypyitaw Radar)
+        const radarCenter = toScreen(18.5, 96.0);
+        const radarRadius = 240 * zoom;
+        const sweepAngle = (pulseTime * 1.8) % (Math.PI * 2);
+
+        // Circular range rings
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.35)';
+        ctx.lineWidth = 1;
+        [0.35, 0.7, 1.0].forEach((ratio) => {
+          ctx.beginPath();
+          ctx.arc(radarCenter.x, radarCenter.y, radarRadius * ratio, 0, Math.PI * 2);
+          ctx.stroke();
+        });
+
+        // Rotating Doppler Sweep Beam with Phosphor Persistence
+        const sweepGrad = ctx.createRadialGradient(
+          radarCenter.x,
+          radarCenter.y,
+          0,
+          radarCenter.x,
+          radarCenter.y,
+          radarRadius
+        );
+        sweepGrad.addColorStop(0, 'rgba(52, 211, 153, 0.5)');
+        sweepGrad.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
+
+        ctx.fillStyle = sweepGrad;
+        ctx.beginPath();
+        ctx.moveTo(radarCenter.x, radarCenter.y);
+        ctx.arc(radarCenter.x, radarCenter.y, radarRadius, sweepAngle - 0.45, sweepAngle);
+        ctx.closePath();
+        ctx.fill();
+
+        // Doppler Reflectivity Rain Cells
+        const rainCells = [
+          { lat: 17.2, lon: 95.8, r: 45, intensity: 'heavy' },
+          { lat: 19.8, lon: 93.6, r: 55, intensity: 'moderate' },
+          { lat: 15.2, lon: 97.8, r: 40, intensity: 'light' },
+          { lat: 24.2, lon: 96.5, r: 35, intensity: 'moderate' },
+        ];
+
+        rainCells.forEach((c) => {
+          const pt = toScreen(c.lat, c.lon);
+          const r = c.r * zoom;
+          const p = Math.sin(pulseTime * 3 + c.lat) * 4;
+
+          const cellGrad = ctx.createRadialGradient(pt.x, pt.y, 5, pt.x, pt.y, r + p);
+          if (c.intensity === 'heavy') {
+            cellGrad.addColorStop(0, 'rgba(239, 68, 68, 0.75)');
+            cellGrad.addColorStop(0.5, 'rgba(245, 158, 11, 0.55)');
+            cellGrad.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
+          } else if (c.intensity === 'moderate') {
+            cellGrad.addColorStop(0, 'rgba(245, 158, 11, 0.70)');
+            cellGrad.addColorStop(0.6, 'rgba(34, 197, 94, 0.45)');
+            cellGrad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+          } else {
+            cellGrad.addColorStop(0, 'rgba(34, 197, 94, 0.65)');
+            cellGrad.addColorStop(0.7, 'rgba(56, 189, 248, 0.35)');
+            cellGrad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+          }
+
+          ctx.fillStyle = cellGrad;
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, r + p, 0, Math.PI * 2);
+          ctx.fill();
+        });
+
+        // Falling Rain Particle Streaks
+        ctx.strokeStyle = 'rgba(186, 230, 253, 0.65)';
+        ctx.lineWidth = 1.2;
+        rainParticlesRef.current.forEach((rp) => {
+          rp.lat -= rp.speed * 0.08;
+          if (rp.lat < 11.0) rp.lat = 26.5;
+
+          const pos = toScreen(rp.lat, rp.lon);
+          ctx.beginPath();
+          ctx.moveTo(pos.x, pos.y);
+          ctx.lineTo(pos.x - 3, pos.y + rp.length);
+          ctx.stroke();
+        });
+        ctx.restore();
+      }
+
+      // (C) CLOUD COVER ANIMATION
+      else if (selectedVariableId.startsWith('cloud_cover')) {
+        ctx.save();
+        // Drifting translucent atmospheric cloud banks
+        const cloudPuffs = [
+          { lat: 22.0, lon: 94.0, size: 140 },
+          { lat: 18.5, lon: 97.0, size: 160 },
+          { lat: 14.0, lon: 95.0, size: 190 },
+          { lat: 25.0, lon: 98.0, size: 120 },
+        ];
+
+        cloudPuffs.forEach((puff, idx) => {
+          const driftLon = puff.lon + Math.sin(pulseTime * 0.4 + idx) * 0.35;
+          const pt = toScreen(puff.lat, driftLon);
+          const r = puff.size * zoom;
+
+          const grad = ctx.createRadialGradient(pt.x, pt.y, 20, pt.x, pt.y, r);
+          grad.addColorStop(0, 'rgba(255, 255, 255, 0.42)');
+          grad.addColorStop(0.5, 'rgba(241, 245, 249, 0.25)');
+          grad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+          ctx.fill();
+        });
+        ctx.restore();
+      }
+
+      // (D) ATMOSPHERIC PRESSURE & ISOBARIC CONTOURS
+      else if (selectedVariableId.startsWith('pressure')) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(147, 197, 253, 0.55)';
+        ctx.lineWidth = 1.4;
+        ctx.font = 'bold 10px monospace';
+        ctx.fillStyle = 'rgba(191, 219, 254, 0.9)';
+
+        // Concentric isobar curves
+        const isobars = [
+          { lat: 16.0, lon: 93.0, r: 80, hPa: 1004 },
+          { lat: 16.0, lon: 93.0, r: 150, hPa: 1008 },
+          { lat: 16.0, lon: 93.0, r: 230, hPa: 1012 },
+          { lat: 16.0, lon: 93.0, r: 310, hPa: 1016 },
+        ];
+
+        isobars.forEach((ib) => {
+          const pt = toScreen(ib.lat, ib.lon);
+          const r = ib.r * zoom;
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.fillText(`${ib.hPa} hPa`, pt.x + r * 0.7, pt.y - r * 0.7);
+        });
+        ctx.restore();
+      }
+
+      // (E) DYNAMIC WIND STREAMLINES (When Wind Layer or Particle Streamlines Active)
+      if (showWindParticles || selectedVariableId.startsWith('wind') || activeLayer === 'wind') {
+        ctx.save();
+        ctx.lineWidth = 1.8;
+
+        particlesRef.current.forEach((p) => {
+          p.age += 1;
+          if (p.age >= p.maxAge) {
+            p.age = 0;
+            p.lat = 8.5 + Math.random() * 21.5;
+            p.lon = 88.0 + Math.random() * 16.0;
+          }
+
+          let windSpeed = 14;
+          if (
+            p.lat >= REGION_BOUNDS.minLat &&
+            p.lat <= REGION_BOUNDS.maxLat &&
+            p.lon >= REGION_BOUNDS.minLon &&
+            p.lon <= REGION_BOUNDS.maxLon
+          ) {
+            windSpeed = sampleGrid(currentWindGrid, p.lat, p.lon);
+          }
+
+          const flowFactor = (windSpeed / 12) * p.speed;
+          // Curve trajectories naturally around the Bay of Bengal into Myanmar
+          p.lat += flowFactor * 0.42;
+          p.lon += flowFactor * 0.32;
+
+          const pPos = toScreen(p.lat, p.lon);
+          const trailPos = toScreen(p.lat - flowFactor * 0.55, p.lon - flowFactor * 0.42);
+
+          const alpha = Math.sin((p.age / p.maxAge) * Math.PI) * 0.85;
+
+          // Velocity-based streamline coloring
+          let strokeColor = `rgba(56, 189, 248, ${alpha.toFixed(2)})`; // Cyan for calm
+          if (windSpeed > 35) {
+            strokeColor = `rgba(244, 63, 94, ${alpha.toFixed(2)})`; // Crimson for gale
+          } else if (windSpeed > 22) {
+            strokeColor = `rgba(245, 158, 11, ${alpha.toFixed(2)})`; // Amber for strong
+          } else if (windSpeed > 14) {
+            strokeColor = `rgba(52, 211, 153, ${alpha.toFixed(2)})`; // Emerald for moderate
+          }
+
+          ctx.strokeStyle = strokeColor;
+          ctx.beginPath();
+          ctx.moveTo(trailPos.x, trailPos.y);
+          ctx.lineTo(pPos.x, pPos.y);
+          ctx.stroke();
+
+          // Particle Comet Head
+          if (p.age > p.maxAge * 0.3 && p.age < p.maxAge * 0.85) {
+            ctx.fillStyle = strokeColor;
+            ctx.beginPath();
+            ctx.arc(pPos.x, pPos.y, 1.4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        });
+        ctx.restore();
+      }
+
+      // 5. Surrounding Coastlines & Neighbor Borders
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.32)';
+      ctx.lineWidth = 1.3;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+
+      // Bay of Bengal coast
+      if (BAY_OF_BENGAL_COAST.length > 0) {
+        ctx.beginPath();
+        const start = toScreen(BAY_OF_BENGAL_COAST[0][1], BAY_OF_BENGAL_COAST[0][0]);
+        ctx.moveTo(start.x, start.y);
+        for (let i = 1; i < BAY_OF_BENGAL_COAST.length; i++) {
+          const pt = toScreen(BAY_OF_BENGAL_COAST[i][1], BAY_OF_BENGAL_COAST[i][0]);
+          ctx.lineTo(pt.x, pt.y);
+        }
+        ctx.stroke();
+      }
+
+      // Bangladesh border
+      if (BANGLADESH_BORDER.length > 0) {
+        ctx.beginPath();
+        const start = toScreen(BANGLADESH_BORDER[0][1], BANGLADESH_BORDER[0][0]);
+        ctx.moveTo(start.x, start.y);
+        for (let i = 1; i < BANGLADESH_BORDER.length; i++) {
+          const pt = toScreen(BANGLADESH_BORDER[i][1], BANGLADESH_BORDER[i][0]);
+          ctx.lineTo(pt.x, pt.y);
+        }
+        ctx.stroke();
+      }
+
+      // Thailand and Malay peninsula coastline
+      if (THAILAND_COASTLINE.length > 0) {
+        ctx.beginPath();
+        const start = toScreen(THAILAND_COASTLINE[0][1], THAILAND_COASTLINE[0][0]);
+        ctx.moveTo(start.x, start.y);
+        for (let i = 1; i < THAILAND_COASTLINE.length; i++) {
+          const pt = toScreen(THAILAND_COASTLINE[i][1], THAILAND_COASTLINE[i][0]);
+          ctx.lineTo(pt.x, pt.y);
+        }
+        ctx.stroke();
+      }
+
+      // Inland borders
+      REGIONAL_INLAND_BORDERS.forEach((border) => {
+        if (border.length < 2) return;
+        ctx.beginPath();
+        const start = toScreen(border[0][1], border[0][0]);
+        ctx.moveTo(start.x, start.y);
+        for (let i = 1; i < border.length; i++) {
+          const pt = toScreen(border[i][1], border[i][0]);
+          ctx.lineTo(pt.x, pt.y);
+        }
+        ctx.stroke();
+      });
+      ctx.restore();
+
+      // ==========================================================
+      // 6. ACCURATE MYANMAR NATIONAL BOUNDARY (CRISP WHITE + NEON GLOW)
+      // Note: In MYANMAR_BORDER_POINTS, pt[0] is LON, pt[1] is LAT!
+      // ==========================================================
+      if (MYANMAR_BORDER_POINTS && MYANMAR_BORDER_POINTS.length > 0) {
+        ctx.save();
+        ctx.beginPath();
+        const start = toScreen(MYANMAR_BORDER_POINTS[0][1], MYANMAR_BORDER_POINTS[0][0]);
+        ctx.moveTo(start.x, start.y);
+        for (let i = 1; i < MYANMAR_BORDER_POINTS.length; i++) {
+          const pt = toScreen(MYANMAR_BORDER_POINTS[i][1], MYANMAR_BORDER_POINTS[i][0]);
+          ctx.lineTo(pt.x, pt.y);
+        }
+        ctx.closePath();
+
+        // Crisp white border stroke with drop shadow
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2.2;
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
+        ctx.shadowBlur = 5;
+        ctx.stroke();
+
+        // Glowing emerald neon accent stroke
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.85)';
+        ctx.lineWidth = 1.2;
+        ctx.shadowColor = 'rgba(16, 185, 129, 0.7)';
+        ctx.shadowBlur = 6;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // 7. Regional Geographic Names (Burmese Typography)
+      REGION_LABELS.forEach((place) => {
+        const pos = toScreen(place.lat, place.lon);
+        if (pos.x < 45 || pos.x > width + 150 || pos.y < 30 || pos.y > height + 50) return;
+
+        ctx.save();
+        ctx.font =
+          place.type === 'sea'
+            ? 'italic bold 13px "Noto Sans Myanmar", sans-serif'
+            : 'bold 12px "Noto Sans Myanmar", sans-serif';
+        ctx.fillStyle = place.type === 'sea' ? 'rgba(224, 242, 254, 0.88)' : 'rgba(255, 255, 255, 0.85)';
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
         ctx.shadowBlur = 4;
-        ctx.fillText(lbl.name, p.x, p.y);
-        ctx.shadowBlur = 0;
+        ctx.fillText(place.name, pos.x, pos.y);
+        ctx.restore();
       });
 
-      // 5b. Animated Bay of Bengal Cyclone Warning Radar Beacon
+      // 8. Cyclone Storm Alert Beacon
       if (stormAlert && stormAlert.alert_active && stormAlert.coordinates) {
-        const cPos = geoToCanvas(stormAlert.coordinates.lat, stormAlert.coordinates.lon, width, height, padding);
-        const ringRadius = 14 + (Math.sin(pulseTime * 3) + 1) * 12;
-
-        // Expanding outer red/amber warning ring
-        ctx.beginPath();
-        ctx.arc(cPos.x, cPos.y, ringRadius, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(244, 63, 94, 0.75)';
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
+        const stormPos = toScreen(stormAlert.coordinates.lat, stormAlert.coordinates.lon);
+        ctx.save();
+        const pulseR = 14 + Math.sin(pulseTime * 3) * 6;
 
         ctx.beginPath();
-        ctx.arc(cPos.x, cPos.y, ringRadius * 0.6, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(251, 146, 60, 0.85)';
-        ctx.lineWidth = 1.8;
-        ctx.stroke();
-
-        // Inner cyclone eye
-        ctx.beginPath();
-        ctx.arc(cPos.x, cPos.y, 6.5, 0, Math.PI * 2);
-        ctx.fillStyle = '#f43f5e';
-        ctx.fill();
-        ctx.strokeStyle = '#ffffff';
+        ctx.arc(stormPos.x, stormPos.y, pulseR * 2.2, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(244, 63, 94, 0.4)';
         ctx.lineWidth = 2;
         ctx.stroke();
 
-        // Cyclone label badge
-        const cycloneLabel = `🚨 ဆိုင်ကလုန်းမုန်တိုင်း ${toBurmeseNumber(stormAlert.max_sustained_wind_kmh)} km/h`;
-        ctx.font = 'bold 12px "Noto Sans Myanmar", sans-serif';
-        const cMetrics = ctx.measureText(cycloneLabel);
-        const cW = cMetrics.width + 16;
-        const cH = 24;
-        const cX = cPos.x - cW / 2;
-        const cY = cPos.y - 34;
-
-        ctx.fillStyle = 'rgba(159, 18, 57, 0.95)';
         ctx.beginPath();
-        ctx.roundRect(cX, cY, cW, cH, 6);
+        ctx.arc(stormPos.x, stormPos.y, pulseR, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(244, 63, 94, 0.3)';
         ctx.fill();
-        ctx.strokeStyle = '#fda4af';
-        ctx.lineWidth = 1.2;
+        ctx.strokeStyle = '#f43f5e';
+        ctx.lineWidth = 2.5;
         ctx.stroke();
 
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText(cycloneLabel, cX + 8, cY + 16);
+        ctx.font = 'bold 11px "Noto Sans Myanmar", sans-serif';
+        ctx.fillStyle = '#fecdd3';
+        ctx.shadowColor = 'rgba(0,0,0,0.95)';
+        ctx.shadowBlur = 4;
+        ctx.fillText(
+          `🚨 ဆိုင်ကလုန်း (${toBurmeseNumber(stormAlert.max_sustained_wind_kmh)} km/h)`,
+          stormPos.x + 18,
+          stormPos.y + 4
+        );
+        ctx.restore();
       }
 
-      // 6. Animated Wind Streamlines
-      if (showWindParticles) {
-        ctx.lineWidth = 1.4;
-        ctx.lineCap = 'round';
-        particlesRef.current.forEach((pt) => {
-          const windVal = sampleGrid(currentWindGrid, pt.lat, pt.lon);
-          const angle = Math.PI * 1.15 + (pt.lat / 29) * 0.2;
-          const speed = (windVal / 25) * 0.08 + 0.02;
+      // 9. City Meteorological Stations (Badges)
+      dataset.cityForecasts.forEach((city) => {
+        const pos = toScreen(city.lat, city.lon);
+        if (pos.x < 45 || pos.x > width + 30 || pos.y < 30 || pos.y > height + 30) return;
 
-          const oldPos = geoToCanvas(pt.lat, pt.lon, width, height, padding);
-          pt.lon += Math.cos(angle) * speed;
-          pt.lat += Math.sin(angle) * speed * 0.7;
-          pt.age += 1;
-
-          const newPos = geoToCanvas(pt.lat, pt.lon, width, height, padding);
-
-          const alpha = Math.sin((pt.age / pt.maxAge) * Math.PI) * 0.8;
-          ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
-          ctx.beginPath();
-          ctx.moveTo(oldPos.x, oldPos.y);
-          ctx.lineTo(newPos.x, newPos.y);
-          ctx.stroke();
-
-          if (
-            pt.age >= pt.maxAge ||
-            pt.lat < REGION_BOUNDS.minLat ||
-            pt.lat > REGION_BOUNDS.maxLat ||
-            pt.lon < REGION_BOUNDS.minLon ||
-            pt.lon > REGION_BOUNDS.maxLon
-          ) {
-            pt.lat = REGION_BOUNDS.minLat + Math.random() * (REGION_BOUNDS.maxLat - REGION_BOUNDS.minLat);
-            pt.lon = REGION_BOUNDS.minLon + Math.random() * (REGION_BOUNDS.maxLon - REGION_BOUNDS.minLon);
-            pt.age = 0;
-            pt.maxAge = 60 + Math.floor(Math.random() * 50);
-          }
-        });
-      }
-
-      // 7. Interactive 3D Pulsing City Markers on the Proper Map
-      dataset.cityForecasts.forEach((city, idx) => {
         const isSelected = city.name === selectedCity.name;
-        const pos = geoToCanvas(city.lat, city.lon, width, height, padding);
-        const cityForecast = city.forecasts[currentStepIndex] || city.forecasts[0];
-        const mmCity = city.mmName || BURMESE_CITIES_MAP[city.name]?.mmName || city.name;
+        const mmName = city.mmName || BURMESE_CITIES_MAP[city.name]?.mmName || city.name;
+        const f = city.forecasts[currentStepIndex] || city.forecasts[0];
+        const temp = Math.round(f?.temperatureC ?? 28);
 
-        // Clean static halo ring (No pulsing)
+        ctx.save();
+        // Pin ring
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, isSelected ? 10 : 8, 0, Math.PI * 2);
-        ctx.strokeStyle = isSelected ? 'rgba(52, 211, 153, 0.45)' : 'rgba(56, 189, 248, 0.35)';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        // Pin center marker
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, isSelected ? 6 : 4.5, 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y, isSelected ? 8 : 5, 0, Math.PI * 2);
         ctx.fillStyle = isSelected ? '#10b981' : '#ffffff';
         ctx.fill();
-        ctx.strokeStyle = '#030712';
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1.8;
         ctx.stroke();
 
-        // Label pill
-        const labelText = `${mmCity}  ${toBurmeseNumber(Math.round(cityForecast.temperatureC))}°C`;
-        ctx.font = isSelected
-          ? 'bold 13px "Noto Sans Myanmar", sans-serif'
-          : '600 12px "Noto Sans Myanmar", sans-serif';
-        const textMetrics = ctx.measureText(labelText);
-        const boxW = textMetrics.width + 14;
-        const boxH = 22;
-        const boxX = pos.x + 8;
-        const boxY = pos.y - boxH / 2;
+        // City Tag Label
+        const labelText = `${mmName} ${toBurmeseNumber(temp)}°C`;
+        ctx.font = 'bold 11px "Noto Sans Myanmar", sans-serif';
+        const textWidth = ctx.measureText(labelText).width;
+        const boxX = pos.x + 9;
+        const boxY = pos.y - 12;
 
-        ctx.fillStyle = isSelected ? 'rgba(16, 185, 129, 0.92)' : 'rgba(3, 7, 18, 0.85)';
+        ctx.fillStyle = isSelected ? 'rgba(6, 78, 59, 0.95)' : 'rgba(15, 23, 42, 0.90)';
         ctx.beginPath();
-        ctx.roundRect(boxX, boxY, boxW, boxH, 6);
+        ctx.roundRect(boxX, boxY, textWidth + 14, 22, 6);
         ctx.fill();
-        ctx.strokeStyle = isSelected ? '#6ee7b7' : 'rgba(255, 255, 255, 0.35)';
+        ctx.strokeStyle = isSelected ? '#34d399' : 'rgba(255, 255, 255, 0.35)';
         ctx.lineWidth = 1.2;
         ctx.stroke();
 
         ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = 'rgba(0,0,0,0.8)';
+        ctx.shadowBlur = 2;
         ctx.fillText(labelText, boxX + 7, boxY + 15);
+        ctx.restore();
       });
 
-      // Cursor Probe Crosshair (Strictly bounded to true ratio map)
+      // 10. Cursor Probe Crosshair
       if (probe) {
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
-        ctx.lineWidth = 1.5;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+        ctx.lineWidth = 1.2;
         ctx.setLineDash([4, 4]);
 
         ctx.beginPath();
-        ctx.moveTo(probe.x, mapY);
-        ctx.lineTo(probe.x, mapY + mapH);
-        ctx.moveTo(mapX, probe.y);
-        ctx.lineTo(mapX + mapW, probe.y);
+        ctx.moveTo(probe.x, 24);
+        ctx.lineTo(probe.x, height);
+        ctx.moveTo(42, probe.y);
+        ctx.lineTo(width, probe.y);
         ctx.stroke();
 
         ctx.setLineDash([]);
         ctx.beginPath();
-        ctx.arc(probe.x, probe.y, 6, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.3)';
+        ctx.arc(probe.x, probe.y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.4)';
         ctx.fill();
         ctx.strokeStyle = '#38bdf8';
         ctx.lineWidth = 2;
         ctx.stroke();
+        ctx.restore();
       }
 
-      ctx.restore();
+      // ==========================================================
+      // 11. FAR-LEFT & FAR-TOP CLEAN RULERS (ZERO MAP CLUTTER!)
+      // Pinned strictly to the edges, not inside the center!
+      // ==========================================================
+
+      // (A) Top Longitude Ruler Bar
+      ctx.save();
+      ctx.fillStyle = 'rgba(2, 6, 23, 0.88)';
+      ctx.fillRect(0, 0, width, 24);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, 24);
+      ctx.lineTo(width, 24);
+      ctx.stroke();
+
+      ctx.font = 'bold 10px "Noto Sans Myanmar", sans-serif';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+      ctx.textAlign = 'center';
+
+      for (let lon = 86; lon <= 108; lon += 2) {
+        const pt = toScreen(centerLat, lon);
+        if (pt.x >= 48 && pt.x <= width - 10) {
+          ctx.beginPath();
+          ctx.moveTo(pt.x, 16);
+          ctx.lineTo(pt.x, 24);
+          ctx.stroke();
+          ctx.fillText(`${toBurmeseNumber(lon)}°E`, pt.x, 12);
+        }
+      }
       ctx.restore();
 
+      // (B) Left Latitude Ruler Bar
+      ctx.save();
+      ctx.fillStyle = 'rgba(2, 6, 23, 0.88)';
+      ctx.fillRect(0, 0, 42, height);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(42, 0);
+      ctx.lineTo(42, height);
+      ctx.stroke();
+
+      ctx.font = 'bold 10px "Noto Sans Myanmar", sans-serif';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+      ctx.textAlign = 'left';
+
+      for (let lat = 8; lat <= 32; lat += 2) {
+        const pt = toScreen(lat, centerLon);
+        if (pt.y >= 32 && pt.y <= height - 8) {
+          ctx.beginPath();
+          ctx.moveTo(35, pt.y);
+          ctx.lineTo(42, pt.y);
+          ctx.stroke();
+          ctx.fillText(`${toBurmeseNumber(lat)}°N`, 6, pt.y + 3.5);
+        }
+      }
+      ctx.restore();
+
+      // (C) Top-Left Intersection Box
+      ctx.save();
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+      ctx.fillRect(0, 0, 42, 24);
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.4)';
+      ctx.strokeRect(0, 0, 42, 24);
+      ctx.font = 'bold 9px "Noto Sans Myanmar", sans-serif';
+      ctx.fillStyle = '#34d399';
+      ctx.textAlign = 'center';
+      ctx.fillText('N / E', 21, 15);
+      ctx.restore();
+
+      ctx.restore();
       animId = requestAnimationFrame(render);
     };
 
     animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, [dataset, currentStepIndex, selectedCity, activeLayer, showWindParticles, zoom, pan, probe]);
+  }, [
+    dataset,
+    currentStepIndex,
+    selectedCity,
+    selectedVariableId,
+    activeLayer,
+    showWindParticles,
+    useMatplotlibOverlay,
+    zoom,
+    pan,
+    probe,
+    stormAlert,
+    satelliteLoaded,
+  ]);
 
+  // Pointer move inspection & direct pan handling
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -494,83 +912,133 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    if (isPanning) {
+    if (isDraggingRef.current) {
+      const dx = e.clientX - dragStartRef.current.x;
+      const dy = e.clientY - dragStartRef.current.y;
+      dragDistRef.current += Math.hypot(dx, dy);
+      dragStartRef.current = { x: e.clientX, y: e.clientY };
+
+      // Direct pan translation update
       setPan((prev) => ({
-        x: prev.x + (e.clientX - panStartRef.current.x),
-        y: prev.y + (e.clientY - panStartRef.current.y),
+        x: prev.x + dx,
+        y: prev.y + dy,
       }));
-      panStartRef.current = { x: e.clientX, y: e.clientY };
       return;
     }
 
-    const padding = 24;
-    const transX = (x - pan.x - rect.width / 2) / zoom + rect.width / 2;
-    const transY = (y - pan.y - rect.height / 2) / zoom + rect.height / 2;
+    // Map screen x/y to lat/lon for probe inspection
+    const width = rect.width;
+    const height = rect.height;
+    const baseCenterLat = 19.5;
+    const baseCenterLon = 96.5;
+    const baseLatSpan = 20.0;
 
-    const mapBox = getTrueRatioMapBounds(rect.width, rect.height, padding);
+    const latSpan = baseLatSpan / zoom;
+    const lonSpan = latSpan * (width / height);
+
+    const centerLon = baseCenterLon - (pan.x / width) * lonSpan;
+    const centerLat = baseCenterLat + (pan.y / height) * latSpan;
+
+    const minLon = centerLon - lonSpan / 2;
+    const maxLat = centerLat + latSpan / 2;
+
+    const lat = maxLat - (y / height) * latSpan;
+    const lon = minLon + (x / width) * lonSpan;
+
     if (
-      transX < mapBox.x - 20 ||
-      transX > mapBox.x + mapBox.width + 20 ||
-      transY < mapBox.y - 20 ||
-      transY > mapBox.y + mapBox.height + 20
+      lat >= REGION_BOUNDS.minLat &&
+      lat <= REGION_BOUNDS.maxLat &&
+      lon >= REGION_BOUNDS.minLon &&
+      lon <= REGION_BOUNDS.maxLon
     ) {
+      const temp = sampleGrid(currentTempGrid, lat, lon);
+      const wind = sampleGrid(currentWindGrid, lat, lon);
+
+      let val = temp;
+      if (selectedVariableId.startsWith('wind')) val = wind;
+      else if (selectedVariableId === 'apparent_temperature') val = temp + 1.2;
+      else if (selectedVariableId === 'relative_humidity_2m')
+        val = Math.min(95, Math.max(40, 75 - (temp - 25) * 2));
+      else if (selectedVariableId === 'precipitation_probability') val = wind > 15 ? 70 : 25;
+      else if (selectedVariableId.startsWith('pressure')) val = 1012;
+      else if (selectedVariableId === 'visibility') val = 20;
+
+      setProbe({
+        x,
+        y,
+        lat: Number(lat.toFixed(2)),
+        lon: Number(lon.toFixed(2)),
+        value: val,
+        temp,
+        wind,
+      });
+    } else {
       setProbe(null);
-      return;
     }
-
-    const geo = canvasToGeo(transX, transY, rect.width, rect.height, padding);
-    const temp = sampleGrid(currentTempGrid, geo.lat, geo.lon);
-    const wind = sampleGrid(currentWindGrid, geo.lat, geo.lon);
-
-    setProbe({
-      x: transX,
-      y: transY,
-      lat: Number(geo.lat.toFixed(2)),
-      lon: Number(geo.lon.toFixed(2)),
-      temp,
-      wind,
-    });
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    const padding = 24;
-    const transX = (x - pan.x - rect.width / 2) / zoom + rect.width / 2;
-    const transY = (y - pan.y - rect.height / 2) / zoom + rect.height / 2;
-
-    for (const city of dataset.cityForecasts) {
-      const pos = geoToCanvas(city.lat, city.lon, rect.width, rect.height, padding);
-      const dist = Math.hypot(transX - pos.x, transY - pos.y);
-      if (dist < 24) {
-        onSelectCity(city);
-        setActivePopupCity(city);
-        return;
-      }
-    }
-
-    setIsPanning(true);
-    panStartRef.current = { x: e.clientX, y: e.clientY };
+    if (e.button !== 0) return; // Only main click / primary touch
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+    isDraggingRef.current = true;
+    dragDistRef.current = 0;
+    dragStartRef.current = { x: e.clientX, y: e.clientY };
   };
 
-  const handlePointerUp = () => {
-    setIsPanning(false);
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isDraggingRef.current) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
+      isDraggingRef.current = false;
+    }
+
+    // Only handle city click if this was a stationary tap (< 6px movement)
+    if (dragDistRef.current < 6) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      const width = rect.width;
+      const height = rect.height;
+      const baseCenterLat = 19.5;
+      const baseCenterLon = 96.5;
+      const baseLatSpan = 20.0;
+      const latSpan = baseLatSpan / zoom;
+      const lonSpan = latSpan * (width / height);
+      const centerLon = baseCenterLon - (pan.x / width) * lonSpan;
+      const centerLat = baseCenterLat + (pan.y / height) * latSpan;
+      const minLon = centerLon - lonSpan / 2;
+      const maxLat = centerLat + latSpan / 2;
+
+      for (const city of dataset.cityForecasts) {
+        const cityX = ((city.lon - minLon) / lonSpan) * width;
+        const cityY = ((maxLat - city.lat) / latSpan) * height;
+        const dist = Math.hypot(cityX - x, cityY - y);
+        if (dist < 22) {
+          onSelectCity(city);
+          setActivePopupCity(city);
+          break;
+        }
+      }
+    }
   };
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.15 : 0.15;
-    setZoom((z) => Math.max(0.7, Math.min(4.0, z + delta)));
+    const factor = e.deltaY < 0 ? 1.15 : 0.87;
+    setZoom((z) => Math.max(0.65, Math.min(5.5, z * factor)));
   };
+
 
   return (
     <div
       ref={containerRef}
-      className="relative h-full w-full overflow-hidden bg-[#030712]"
+      className="relative h-full w-full overflow-hidden bg-[#020617] select-none"
     >
       <canvas
         ref={canvasRef}
@@ -578,11 +1046,11 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         onPointerDown={handlePointerDown}
         onPointerUp={handlePointerUp}
         onPointerLeave={() => {
-          setIsPanning(false);
+          isDraggingRef.current = false;
           setProbe(null);
         }}
         onWheel={handleWheel}
-        className="h-full w-full cursor-crosshair touch-none"
+        className="h-full w-full cursor-grab active:cursor-grabbing touch-none block"
       />
 
       {/* Localized City Weather Popup */}
@@ -599,90 +1067,153 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         />
       )}
 
-      {/* Floating Minimal Layer Toolbar */}
-      <div className="absolute top-20 left-6 z-20 flex flex-wrap items-center gap-2 rounded-full border border-white/15 bg-black/60 p-1.5 backdrop-blur-xl">
+      {/* Top Left Toolbar (Burmese Buttons) */}
+      <div className="absolute top-20 left-12 z-20 flex flex-wrap items-center gap-2">
+        {/* Button 1: 2m Temperature */}
         <button
-          onClick={() => onLayerChange('temperature')}
-          className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-            activeLayer === 'temperature'
-              ? 'bg-amber-500 text-slate-950 shadow-sm font-bold'
-              : 'text-slate-200 hover:text-white hover:bg-white/10'
+          onClick={() => {
+            setSelectedVariableId('temperature_2m');
+            onLayerChange('temperature');
+          }}
+          className={`flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold transition cursor-pointer shadow-lg backdrop-blur-xl ${
+            selectedVariableId === 'temperature_2m'
+              ? 'bg-amber-500 text-slate-950 shadow-amber-500/20'
+              : 'border border-white/20 bg-black/75 text-slate-300 hover:text-white'
           }`}
         >
-          <Flame className="h-3.5 w-3.5" />
           <span>၂ မီတာ အပူချိန် (°C)</span>
         </button>
 
+        {/* Button 2: 10m Wind Speed */}
         <button
-          onClick={() => onLayerChange('wind')}
-          className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-            activeLayer === 'wind'
-              ? 'bg-emerald-500 text-slate-950 shadow-sm font-bold'
-              : 'text-slate-200 hover:text-white hover:bg-white/10'
+          onClick={() => {
+            setSelectedVariableId('wind_speed_10m');
+            onLayerChange('wind');
+          }}
+          className={`flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold transition cursor-pointer shadow-lg backdrop-blur-xl ${
+            selectedVariableId.startsWith('wind')
+              ? 'bg-teal-500 text-slate-950 shadow-teal-500/20'
+              : 'border border-white/20 bg-black/75 text-slate-300 hover:text-white'
           }`}
         >
           <Wind className="h-3.5 w-3.5" />
           <span>၁၀ မီတာ လေတိုက်နှုန်း</span>
         </button>
 
+        {/* Button 3: Doppler Satellite Radar */}
         <button
-          onClick={() => onLayerChange('satellite')}
-          className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-            activeLayer === 'satellite'
-              ? 'bg-cyan-500 text-slate-950 shadow-sm font-bold'
-              : 'text-slate-200 hover:text-white hover:bg-white/10'
+          onClick={() => {
+            setSelectedVariableId('radar_reflectivity');
+            onLayerChange('radar');
+          }}
+          className={`hidden sm:flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold transition cursor-pointer shadow-lg backdrop-blur-xl ${
+            selectedVariableId === 'radar_reflectivity'
+              ? 'bg-sky-500 text-slate-950 shadow-sky-500/20'
+              : 'border border-white/20 bg-black/75 text-slate-300 hover:text-white'
           }`}
         >
-          <Layers className="h-3.5 w-3.5" />
+          <Radio className="h-3.5 w-3.5" />
           <span>ဂြိုဟ်တု ရေဒါ</span>
         </button>
 
-        <div className="h-4 w-px bg-white/20" />
-
+        {/* Button 4: Wind Particles Toggle */}
         <button
           onClick={onToggleWindParticles}
-          className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-            showWindParticles ? 'bg-white/20 text-emerald-300' : 'text-slate-400 hover:text-white'
+          className={`flex items-center gap-1.5 rounded-full border border-white/20 px-3.5 py-2 text-xs font-semibold backdrop-blur-xl transition cursor-pointer ${
+            showWindParticles
+              ? 'bg-emerald-500/25 border-emerald-500/40 text-emerald-300'
+              : 'bg-black/75 text-slate-300 hover:text-white'
           }`}
         >
-          {BURMESE_STRINGS.streamlines} {showWindParticles ? 'ဖွင့်' : 'ပိတ်'}
+          <span>
+            {BURMESE_STRINGS.streamlines} {showWindParticles ? 'ဖွင့်' : 'ပိတ်'}
+          </span>
         </button>
 
-        <div className="h-4 w-px bg-white/20" />
-
+        {/* Button 5: Matplotlib Overlays Toggle */}
         <button
           onClick={() => setUseMatplotlibOverlay((v) => !v)}
-          className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${
+          className={`hidden md:flex items-center gap-1.5 rounded-full border border-white/20 px-3.5 py-2 text-xs font-semibold backdrop-blur-xl transition cursor-pointer ${
             useMatplotlibOverlay
-              ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/40'
-              : 'text-slate-400 hover:text-white hover:bg-white/10'
+              ? 'bg-indigo-500/25 border-indigo-500/40 text-indigo-300'
+              : 'bg-black/75 text-slate-300 hover:text-white'
           }`}
-          title="Matplotlib RdYlBu_r / viridis Transparent PNG Overlay"
         >
           <Palette className="h-3.5 w-3.5 text-indigo-400" />
           <span>Matplotlib Overlays {useMatplotlibOverlay ? 'ဖွင့်' : 'ပိတ်'}</span>
         </button>
 
-        <div className="h-4 w-px bg-white/20" />
+        {/* Button 6: 32 Variables Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setIsDropdownOpen((v) => !v)}
+            className="flex items-center gap-2 rounded-full border border-white/20 bg-black/75 px-3.5 py-2 text-xs font-semibold text-slate-300 backdrop-blur-xl transition hover:bg-black/90 hover:text-white cursor-pointer"
+          >
+            <span>ညွှန်းကိန်း ၃၂ မျိုး</span>
+            <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+          </button>
 
-        <div className="hidden sm:flex items-center gap-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-3 py-1 text-[11px] font-mono text-emerald-300">
-          <Scaling className="h-3 w-3" />
-          <span>True Ratio 1:2 (10°E × 20°N)</span>
+          {isDropdownOpen && (
+            <div className="absolute left-0 top-12 z-50 w-72 max-h-[380px] overflow-y-auto rounded-2xl border border-white/20 bg-black/95 p-2 shadow-2xl backdrop-blur-2xl animate-in fade-in zoom-in-95 duration-150">
+              <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-white/10 mb-1">
+                ရာသီဥတု ညွှန်းကိန်း ရွေးချယ်ရန် (32 Variables)
+              </div>
+
+              {WEATHER_CATEGORIES.map((cat) => {
+                const varsInCat = WEATHER_VARIABLES.filter((v) => v.categoryId === cat.id);
+                return (
+                  <div key={cat.id} className="mb-2">
+                    <div className="px-2 py-1 text-[10px] font-semibold text-emerald-400">
+                      {cat.labelMm}
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      {varsInCat.map((v) => {
+                        const isSelected = selectedVariableId === v.id;
+                        return (
+                          <button
+                            key={v.id}
+                            onClick={() => {
+                              setSelectedVariableId(v.id);
+                              if (v.id.startsWith('wind')) onLayerChange('wind');
+                              else onLayerChange('temperature');
+                              setIsDropdownOpen(false);
+                            }}
+                            className={`flex items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-xs transition cursor-pointer ${
+                              isSelected
+                                ? 'bg-white/20 text-white font-bold'
+                                : 'text-slate-300 hover:bg-white/10 hover:text-white'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: v.color }} />
+                              <span>{v.labelMm}</span>
+                            </div>
+                            <span className="text-[10px] font-mono text-slate-400">{v.unit}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Map Zoom Controls */}
-      <div className="absolute top-20 right-6 z-20 flex flex-col gap-1.5 rounded-2xl border border-white/15 bg-black/60 p-1 backdrop-blur-xl">
+
+      {/* Map Zoom Controls & Fullscreen */}
+      <div className="absolute top-20 right-6 z-20 flex flex-col gap-1.5 rounded-2xl border border-white/20 bg-black/75 p-1 backdrop-blur-xl">
         <button
-          onClick={() => setZoom((z) => Math.min(4.0, z + 0.3))}
-          className="rounded-xl p-2 text-slate-300 transition hover:bg-white/15 hover:text-white"
+          onClick={() => setZoom((z) => Math.min(5.5, z + 0.35))}
+          className="rounded-xl p-2 text-slate-300 transition hover:bg-white/15 hover:text-white cursor-pointer"
           title={BURMESE_STRINGS.zoomIn}
         >
           <ZoomIn className="h-4 w-4" />
         </button>
         <button
-          onClick={() => setZoom((z) => Math.max(0.7, z - 0.3))}
-          className="rounded-xl p-2 text-slate-300 transition hover:bg-white/15 hover:text-white"
+          onClick={() => setZoom((z) => Math.max(0.65, z - 0.35))}
+          className="rounded-xl p-2 text-slate-300 transition hover:bg-white/15 hover:text-white cursor-pointer"
           title={BURMESE_STRINGS.zoomOut}
         >
           <ZoomOut className="h-4 w-4" />
@@ -692,7 +1223,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
             setZoom(1);
             setPan({ x: 0, y: 0 });
           }}
-          className="rounded-xl p-2 text-slate-300 transition hover:bg-white/15 hover:text-white"
+          className="rounded-xl p-2 text-slate-300 transition hover:bg-white/15 hover:text-white cursor-pointer"
           title={BURMESE_STRINGS.resetView}
         >
           <RotateCcw className="h-4 w-4" />
@@ -717,7 +1248,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
 
       {/* Live Probe Hover Inspection Glass */}
       {probe && (
-        <div className="pointer-events-none absolute bottom-24 left-6 z-20 flex items-center gap-4 rounded-2xl border border-white/20 bg-black/75 px-4 py-2.5 text-xs text-white shadow-2xl backdrop-blur-xl">
+        <div className="pointer-events-none absolute bottom-24 left-14 z-20 flex items-center gap-4 rounded-2xl border border-white/20 bg-black/85 px-4 py-2.5 text-xs text-white shadow-2xl backdrop-blur-xl">
           <div className="flex flex-col">
             <span className="text-[10px] text-slate-400">တည်နေရာ</span>
             <span className="font-mono font-medium">
@@ -726,9 +1257,9 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
           </div>
           <div className="h-6 w-px bg-white/20" />
           <div className="flex flex-col">
-            <span className="text-[10px] text-slate-400">အပူချိန်</span>
-            <span className="font-mono font-bold text-amber-400">
-              {toBurmeseNumber(probe.temp)}°C
+            <span className="text-[10px] text-slate-400">{currentVarDef.labelMm}</span>
+            <span className="font-mono font-bold" style={{ color: currentVarDef.color }}>
+              {toBurmeseNumber(probe.value)} {currentVarDef.unit}
             </span>
           </div>
           <div className="h-6 w-px bg-white/20" />
@@ -742,28 +1273,29 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
       )}
 
       {/* Color Scale Legend */}
-      <div className="pointer-events-none absolute bottom-24 right-6 z-20 flex flex-col items-end gap-1 rounded-2xl border border-white/15 bg-black/60 p-3 text-[11px] text-slate-300 backdrop-blur-xl">
-        <div className="font-semibold text-white">
-          {activeLayer === 'temperature'
-            ? '၂ မီတာ အပူချိန် (°C)'
-            : activeLayer === 'wind'
-            ? '၁၀ မီတာ လေတိုက်နှုန်း (km/h)'
-            : 'ဂြိုဟ်တု မိုးရွာသွန်းမှု ရေဒါ'}
+      <div className="pointer-events-none absolute bottom-24 right-6 z-20 flex flex-col items-end gap-1 rounded-2xl border border-white/20 bg-black/80 p-3 text-[11px] text-slate-300 backdrop-blur-xl shadow-2xl">
+        <div className="font-bold text-white">
+          {currentVarDef.labelMm} ({currentVarDef.unit})
         </div>
         <div className="flex items-center gap-2">
-          <span>{activeLayer === 'temperature' ? '၀°C' : activeLayer === 'wind' ? '၀' : 'နိမ့်'}</span>
+          <span>
+            {toBurmeseNumber(currentVarDef.min)}
+            {currentVarDef.unit}
+          </span>
           <div
             className="h-2.5 w-36 rounded-full shadow-inner"
             style={{
-              background:
-                activeLayer === 'temperature'
-                  ? 'linear-gradient(to right, rgb(34, 66, 150), rgb(115, 180, 220), rgb(255, 255, 200), rgb(245, 130, 45), rgb(220, 50, 32), rgb(105, 5, 15))'
-                  : activeLayer === 'wind'
-                  ? 'linear-gradient(to right, rgb(68, 1, 84), rgb(49, 104, 142), rgb(33, 145, 140), rgb(94, 201, 98), rgb(253, 231, 37))'
-                  : 'linear-gradient(to right, rgb(56, 189, 248), rgb(34, 197, 94), rgb(245, 158, 11), rgb(239, 68, 68))',
+              background: selectedVariableId.startsWith('wind')
+                ? 'linear-gradient(to right, rgb(56, 189, 248), rgb(52, 211, 153), rgb(245, 158, 11), rgb(244, 63, 94))'
+                : selectedVariableId.startsWith('temperature')
+                ? 'linear-gradient(to right, rgb(56, 189, 248), rgb(251, 191, 36), rgb(245, 158, 11), rgb(239, 68, 68))'
+                : 'linear-gradient(to right, rgb(56, 189, 248), rgb(34, 197, 94), rgb(245, 158, 11), rgb(239, 68, 68))',
             }}
           />
-          <span>{activeLayer === 'temperature' ? '၃၅°C' : activeLayer === 'wind' ? '၂၅+' : 'မြင့်'}</span>
+          <span>
+            {toBurmeseNumber(currentVarDef.max)}
+            {currentVarDef.unit}
+          </span>
         </div>
       </div>
     </div>

@@ -10,7 +10,6 @@ import { ShowcaseHeader } from './components/ShowcaseHeader';
 import { OverviewStrip } from './components/OverviewStrip';
 import { ForecastMap2D } from './components/ForecastMap2D';
 import { SatelliteGlobe3D } from './components/SatelliteGlobe3D';
-import { DualFcnMap } from './components/DualFcnMap';
 import { CityForecastPanel } from './components/CityForecastPanel';
 import { TimelineControls } from './components/TimelineControls';
 import { DataIngestModal } from './components/DataIngestModal';
@@ -274,14 +273,6 @@ export default function App() {
           />
         )}
 
-        {viewMode === 'dual_fcn' && (
-          <DualFcnMap
-            dataset={dataset}
-            currentStepIndex={currentStepIndex}
-            selectedCity={selectedCity}
-            onSelectCity={setSelectedCity}
-          />
-        )}
 
         {viewMode === 'city_trends' && (
           <CityForecastPanel

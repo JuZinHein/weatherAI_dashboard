@@ -175,13 +175,13 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
       return tex;
     };
 
-    const dayTexture = loadTexture('/textures/earth_hd.jpg');
+    const dayTexture = loadTexture('/textures/earth_4k.jpg');
 
     const earthGeo = new THREE.SphereGeometry(1.8, 128, 128);
     const earthMat = new THREE.MeshStandardMaterial({
       map: dayTexture,
-      roughness: 0.6,
-      metalness: 0.05,
+      roughness: 0.55,
+      metalness: 0.04,
     });
     const earthMesh = new THREE.Mesh(earthGeo, earthMat);
     earthMeshRef.current = earthMesh;
@@ -452,6 +452,24 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
 
       if (cloudsMeshRef.current) {
         cloudsMeshRef.current.rotation.y += delta * 0.012;
+      }
+
+      // Responsive zoom scaling: As user zooms in (camera approaches globe surface),
+      // scale city names and beacon dots gracefully down so they remain refined, sharp,
+      // and never clutter or block neighboring regions!
+      if (cameraRef.current && cityPinsRef.current.length > 0) {
+        const camPos = cameraRef.current.position;
+        cityPinsRef.current.forEach((pin) => {
+          const distToPin = camPos.distanceTo(pin.mesh.position);
+          const normDist = Math.max(0.4, Math.min(5.5, distToPin));
+          // Proportional scaling ensures the label screen size remains constant, crisp, and readable across all camera distances (like Google Earth)
+          const scale = 0.22 * (normDist / 3.2);
+          pin.sprite.scale.set(scale, scale * (0.057 / 0.26), 1);
+
+          const dotScale = Math.max(0.5, Math.min(1.15, normDist / 3.2));
+          pin.mesh.scale.setScalar(dotScale);
+          pin.halo.scale.setScalar(dotScale);
+        });
       }
 
       renderer.render(scene, camera);

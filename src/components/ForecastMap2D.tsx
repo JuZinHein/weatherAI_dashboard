@@ -106,7 +106,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
   // Load NASA/Blue Marble Global Satellite Base Map
   useEffect(() => {
     const img = new Image();
-    img.src = '/textures/earth_hd.jpg';
+    img.src = '/textures/earth_4k.jpg';
     img.onload = () => {
       satelliteImgRef.current = img;
       setSatelliteLoaded(true);
@@ -696,7 +696,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         ctx.restore();
       }
 
-      // 7. Regional Geographic Names (Burmese Typography)
+      // 7. Regional Geographic Names (Burmese Typography - Stable & Crisp Legibility)
       REGION_LABELS.forEach((place) => {
         const pos = toScreen(place.lat, place.lon);
         if (pos.x < 45 || pos.x > width + 150 || pos.y < 30 || pos.y > height + 50) return;
@@ -704,8 +704,8 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         ctx.save();
         ctx.font =
           place.type === 'sea'
-            ? 'italic bold 13px "Noto Sans Myanmar", sans-serif'
-            : 'bold 12px "Noto Sans Myanmar", sans-serif';
+            ? 'italic bold 12px "Noto Sans Myanmar", sans-serif'
+            : 'bold 11px "Noto Sans Myanmar", sans-serif';
         ctx.fillStyle = place.type === 'sea' ? 'rgba(224, 242, 254, 0.88)' : 'rgba(255, 255, 255, 0.85)';
         ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
         ctx.shadowBlur = 4;
@@ -745,8 +745,37 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         ctx.restore();
       }
 
-      // 9. City Meteorological Stations (Badges)
-      dataset.cityForecasts.forEach((city) => {
+      // 9. City Meteorological Stations (Google Maps Style: High-Legibility, Readable Font in All Situations + Non-Overlapping Placement)
+      const cityFontSize = 11.5;
+      const badgeH = 22;
+      const badgePadX = 7;
+      const pinR = 4.5;
+      const pinSelectedR = 7;
+
+      // Track placed label bounding boxes to prevent overlapping just like Google Maps
+      const placedLabelBoxes: { x1: number; y1: number; x2: number; y2: number }[] = [];
+
+      // Sort order: Selected city first, then major hubs, then secondary towns
+      const MAJOR_PRIORITY_CITIES = new Set([
+        'Yangon',
+        'Mandalay',
+        'Nay Pyi Taw',
+        'Sittwe',
+        'Taunggyi',
+        'Myitkyina',
+        'Mawlamyine',
+        'Dawei',
+      ]);
+
+      const sortedCities = [...dataset.cityForecasts].sort((a, b) => {
+        if (a.name === selectedCity.name) return -1;
+        if (b.name === selectedCity.name) return 1;
+        const aMajor = MAJOR_PRIORITY_CITIES.has(a.name) ? 1 : 0;
+        const bMajor = MAJOR_PRIORITY_CITIES.has(b.name) ? 1 : 0;
+        return bMajor - aMajor;
+      });
+
+      sortedCities.forEach((city) => {
         const pos = toScreen(city.lat, city.lon);
         if (pos.x < 45 || pos.x > width + 30 || pos.y < 30 || pos.y > height + 30) return;
 
@@ -756,34 +785,79 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         const temp = Math.round(f?.temperatureC ?? 28);
 
         ctx.save();
-        // Pin ring
+        // 1. Draw Clean Pin Marker (Always visible and clickable)
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, isSelected ? 8 : 5, 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y, isSelected ? pinSelectedR : pinR, 0, Math.PI * 2);
         ctx.fillStyle = isSelected ? '#10b981' : '#ffffff';
         ctx.fill();
         ctx.strokeStyle = '#000000';
-        ctx.lineWidth = 1.8;
+        ctx.lineWidth = isSelected ? 2 : 1.5;
         ctx.stroke();
 
-        // City Tag Label
+        // 2. Google Maps Style Label Placement
         const labelText = `${mmName} ${toBurmeseNumber(temp)}°C`;
-        ctx.font = 'bold 11px "Noto Sans Myanmar", sans-serif';
+        ctx.font = `bold ${cityFontSize}px "Noto Sans Myanmar", sans-serif`;
         const textWidth = ctx.measureText(labelText).width;
-        const boxX = pos.x + 9;
-        const boxY = pos.y - 12;
+        const boxW = textWidth + badgePadX * 2;
 
-        ctx.fillStyle = isSelected ? 'rgba(6, 78, 59, 0.95)' : 'rgba(15, 23, 42, 0.90)';
-        ctx.beginPath();
-        ctx.roundRect(boxX, boxY, textWidth + 14, 22, 6);
-        ctx.fill();
-        ctx.strokeStyle = isSelected ? '#34d399' : 'rgba(255, 255, 255, 0.35)';
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
+        // Try candidate positions: Right (preferred), Left, Top, Bottom
+        const candidates = [
+          { x: pos.x + pinR + 4, y: pos.y - badgeH / 2 },
+          { x: pos.x - pinR - 4 - boxW, y: pos.y - badgeH / 2 },
+          { x: pos.x - boxW / 2, y: pos.y - pinR - 4 - badgeH },
+          { x: pos.x - boxW / 2, y: pos.y + pinR + 4 },
+        ];
 
-        ctx.fillStyle = '#ffffff';
-        ctx.shadowColor = 'rgba(0,0,0,0.8)';
-        ctx.shadowBlur = 2;
-        ctx.fillText(labelText, boxX + 7, boxY + 15);
+        let chosenBox: { x: number; y: number } | null = null;
+
+        for (const cand of candidates) {
+          // Check bounds
+          if (cand.x < 46 || cand.x + boxW > width - 8) continue;
+          if (cand.y < 26 || cand.y + badgeH > height - 8) continue;
+
+          // Check collision with already placed labels (2px margin)
+          const boxX1 = cand.x - 2;
+          const boxY1 = cand.y - 2;
+          const boxX2 = cand.x + boxW + 2;
+          const boxY2 = cand.y + badgeH + 2;
+
+          const collides = placedLabelBoxes.some(
+            (b) => boxX1 < b.x2 && boxX2 > b.x1 && boxY1 < b.y2 && boxY2 > b.y1
+          );
+
+          if (!collides) {
+            chosenBox = cand;
+            placedLabelBoxes.push({ x1: cand.x, y1: cand.y, x2: cand.x + boxW, y2: cand.y + badgeH });
+            break;
+          }
+        }
+
+        // If selected city collides, force placement anyway so user's active choice is always visible!
+        if (!chosenBox && isSelected) {
+          chosenBox = candidates[0];
+          placedLabelBoxes.push({
+            x1: chosenBox.x,
+            y1: chosenBox.y,
+            x2: chosenBox.x + boxW,
+            y2: chosenBox.y + badgeH,
+          });
+        }
+
+        // Render Label Badge if space exists
+        if (chosenBox) {
+          ctx.fillStyle = isSelected ? 'rgba(6, 78, 59, 0.95)' : 'rgba(15, 23, 42, 0.92)';
+          ctx.beginPath();
+          ctx.roundRect(chosenBox.x, chosenBox.y, boxW, badgeH, 6);
+          ctx.fill();
+          ctx.strokeStyle = isSelected ? '#34d399' : 'rgba(255, 255, 255, 0.35)';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+
+          ctx.fillStyle = '#ffffff';
+          ctx.shadowColor = 'rgba(0,0,0,0.85)';
+          ctx.shadowBlur = 2;
+          ctx.fillText(labelText, chosenBox.x + badgePadX, chosenBox.y + 15.5);
+        }
         ctx.restore();
       });
 

@@ -1,7 +1,7 @@
 import React from 'react';
 import { ForecastDataset, CityInfo } from '../types/forecast';
 import { getTemperatureColor, getWindColor, geoToCanvas, getTrueRatioMapBounds, MYANMAR_BORDER_POINTS } from '../utils/geo';
-import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from '../utils/burmese';
+import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP, formatMyanmarTime } from '../utils/burmese';
 import { Sparkles, Thermometer, Wind } from 'lucide-react';
 
 interface DualFcnMapProps {
@@ -128,8 +128,8 @@ export const DualFcnMap: React.FC<DualFcnMapProps> = ({
               ကြိုတင်ခန့်မှန်းချက် +{toBurmeseNumber(leadHour)} နာရီ အတွက် ဒေသတွင်း မိုးလေဝသ အခြေအနေ (Numerical AI Grid Data)
             </p>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 font-mono text-xs text-emerald-400">
-            UTC: {validUtc}
+          <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 font-burmese text-xs text-emerald-300">
+            {formatMyanmarTime(validUtc, true)}
           </div>
         </div>
 

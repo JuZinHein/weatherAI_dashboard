@@ -12,7 +12,7 @@ import {
 } from '../utils/geo';
 import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from '../utils/burmese';
 import { CityWeatherPopup3D } from './CityWeatherPopup3D';
-import { Layers, Wind, Eye, ZoomIn, ZoomOut, RotateCcw, Flame, Radio, Palette, Scaling } from 'lucide-react';
+import { Layers, Wind, Eye, ZoomIn, ZoomOut, RotateCcw, Flame, Radio, Palette, Scaling, Maximize2 } from 'lucide-react';
 
 interface ForecastMap2DProps {
   dataset: ForecastDataset;
@@ -202,7 +202,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
           data[idx] = rgb[0];
           data[idx + 1] = rgb[1];
           data[idx + 2] = rgb[2];
-          data[idx + 3] = activeLayer === 'satellite' ? 180 : 155;
+          data[idx + 3] = activeLayer === 'satellite' ? 95 : 135;
         }
       }
       offCtx.putImageData(imgData, 0, 0);
@@ -247,17 +247,19 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
       const mplImg = matplotlibImgRef.current;
       if (useMatplotlibOverlay && mplImg && mplImg.complete && activeLayer !== 'satellite') {
         ctx.save();
-        ctx.globalAlpha = 0.85;
+        ctx.globalAlpha = 0.70;
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(mplImg, mapX, mapY, mapW, mapH);
         ctx.restore();
       } else {
+        ctx.save();
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-        ctx.globalCompositeOperation = 'screen';
-        ctx.drawImage(offscreen, mapX, mapY, mapW, mapH);
         ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = activeLayer === 'satellite' ? 0.52 : 0.72;
+        ctx.drawImage(offscreen, mapX, mapY, mapW, mapH);
+        ctx.restore();
       }
 
       // 3. Graticule Lat/Lon Lines (Bounded strictly within True Ratio map frame)
@@ -694,6 +696,22 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
           title={BURMESE_STRINGS.resetView}
         >
           <RotateCcw className="h-4 w-4" />
+        </button>
+
+        <div className="mx-1 h-px bg-white/20" />
+
+        <button
+          onClick={() => {
+            if (!document.fullscreenElement) {
+              document.documentElement.requestFullscreen().catch(() => {});
+            } else {
+              document.exitFullscreen().catch(() => {});
+            }
+          }}
+          className="rounded-xl p-2 text-emerald-400 hover:bg-emerald-500/20 hover:text-white transition cursor-pointer"
+          title="မျက်နှာပြင်အပြည့်ဖွင့်ရန် (Shortcut: [F])"
+        >
+          <Maximize2 className="h-4 w-4" />
         </button>
       </div>
 

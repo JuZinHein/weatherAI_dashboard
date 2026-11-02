@@ -1,7 +1,7 @@
 import React from 'react';
 import { ViewMode } from '../types/forecast';
 import { BURMESE_STRINGS, toBurmeseNumber } from '../utils/burmese';
-import { Maximize2, Minimize2, Upload, Play, Pause, Globe, Map, BarChart3, Cpu, Sparkles, Server, Radio } from 'lucide-react';
+import { Maximize2, Minimize2, Upload, Play, Pause, Globe, Map, BarChart3, Cpu, Sparkles, Server, Radio, Clock } from 'lucide-react';
 
 interface ShowcaseHeaderProps {
   viewMode: ViewMode;
@@ -118,6 +118,14 @@ export const ShowcaseHeader: React.FC<ShowcaseHeaderProps> = ({
             </button>
           )}
 
+          {/* Myanmar Standard Time Badge */}
+          {validMyanmarTime && (
+            <div className="hidden xl:flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-950/40 px-3 py-1 font-burmese text-xs text-emerald-300">
+              <Clock className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+              <span>{validMyanmarTime}</span>
+            </div>
+          )}
+
           <button
             onClick={onTogglePlay}
             className="flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-white/15 hover:text-white"
@@ -134,12 +142,15 @@ export const ShowcaseHeader: React.FC<ShowcaseHeaderProps> = ({
             <span className="hidden sm:inline">{BURMESE_STRINGS.uploadZip}</span>
           </button>
 
+          {/* Prominent High-Visibility Fullscreen Button with Shortcut [F] */}
           <button
             onClick={onToggleFullscreen}
-            className="flex items-center gap-2 rounded-full bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-lg shadow-emerald-900/30 transition hover:bg-emerald-500 whitespace-nowrap shrink-0"
+            title="မျက်နှာပြင်အပြည့်ဖွင့်ရန် (Shortcut: [F])"
+            className="flex items-center gap-2 rounded-full bg-gradient-to-r from-emerald-600 to-teal-600 px-4 py-2 text-xs font-bold text-white shadow-lg shadow-emerald-900/50 ring-2 ring-emerald-400/60 transition hover:from-emerald-500 hover:to-teal-500 active:scale-95 whitespace-nowrap shrink-0 cursor-pointer"
           >
-            {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+            {isFullscreen ? <Minimize2 className="h-4 w-4 text-emerald-100" /> : <Maximize2 className="h-4 w-4 text-emerald-100" />}
             <span>{isFullscreen ? BURMESE_STRINGS.exitFullscreen : BURMESE_STRINGS.displayKiosk}</span>
+            <kbd className="hidden sm:inline-block rounded bg-black/40 px-1.5 py-0.5 text-[10px] font-mono text-emerald-200 font-bold border border-emerald-400/40">F</kbd>
           </button>
         </div>
       </div>

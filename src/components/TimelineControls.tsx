@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Clock, Repeat, CloudRain, ChevronUp, ChevronDown } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Clock, Repeat, CloudRain, ChevronUp, ChevronDown, Maximize2 } from 'lucide-react';
 import { ForecastDataset, CityInfo } from '../types/forecast';
-import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from '../utils/burmese';
+import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP, formatMyanmarTime } from '../utils/burmese';
 
 interface TimelineControlsProps {
   dataset: ForecastDataset;
@@ -189,14 +189,29 @@ export const TimelineControls: React.FC<TimelineControlsProps> = ({
             })}
           </div>
 
-          {/* Valid Time in Burmese */}
+          {/* Valid Time in Myanmar Standard Time */}
           <div className="hidden sm:flex items-center gap-2 rounded-xl bg-white/5 px-3 py-1.5 text-xs">
-            <Clock className="h-3.5 w-3.5 text-emerald-400" />
-            <div className="text-right font-mono">
-              <span className="text-[10px] text-slate-400 block leading-tight">ခန့်မှန်းချက်အဆင့်</span>
-              <span className="font-semibold text-white">+{toBurmeseNumber(currentLead)} နာရီ</span>
+            <Clock className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+            <div className="text-right">
+              <span className="text-[10px] text-emerald-300 block leading-tight font-burmese">{formatMyanmarTime(currentUtc, true)}</span>
+              <span className="font-semibold text-white font-mono text-[11px]">+{toBurmeseNumber(currentLead)} နာရီ ခန့်မှန်းချက်</span>
             </div>
           </div>
+
+          {/* Quick Fullscreen Button for mobile/tablet */}
+          <button
+            onClick={() => {
+              if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+              } else {
+                document.exitFullscreen().catch(() => {});
+              }
+            }}
+            className="flex sm:hidden h-9 w-9 items-center justify-center rounded-xl bg-emerald-600/80 text-white transition hover:bg-emerald-500"
+            title="မျက်နှာပြင်အပြည့် (Fullscreen)"
+          >
+            <Maximize2 className="h-4 w-4" />
+          </button>
         </div>
       </div>
     </div>

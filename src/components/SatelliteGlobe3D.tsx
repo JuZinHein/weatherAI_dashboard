@@ -5,7 +5,7 @@ import { CityInfo, ForecastDataset } from '../types/forecast';
 import { MYANMAR_BORDER_POINTS } from '../utils/geo';
 import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from '../utils/burmese';
 import { CityWeatherPopup3D } from './CityWeatherPopup3D';
-import { Compass, Cloud, Flame, RotateCw, ZoomIn, ZoomOut } from 'lucide-react';
+import { Compass, Cloud, Flame, RotateCw, ZoomIn, ZoomOut, Maximize2, Minimize2 } from 'lucide-react';
 
 interface SatelliteGlobe3DProps {
   dataset: ForecastDataset;
@@ -226,9 +226,9 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
     const rMat = new THREE.MeshBasicMaterial({
       map: rTexture,
       transparent: true,
-      opacity: 0.95,
+      opacity: 0.55,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
     });
     const rMesh = new THREE.Mesh(rGeo, rMat);
     radarMeshRef.current = rMesh;
@@ -503,22 +503,22 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
         let outerColor = '';
 
         if (windVal > 15 || (tempVal > 30.5 && r > 22)) {
-          coreColor = windVal > 18 ? 'rgba(239, 68, 68, 0.92)' : 'rgba(245, 158, 11, 0.9)';
-          outerColor = 'rgba(16, 185, 129, 0.7)';
+          coreColor = windVal > 18 ? 'rgba(239, 68, 68, 0.62)' : 'rgba(245, 158, 11, 0.58)';
+          outerColor = 'rgba(16, 185, 129, 0.38)';
         } else if (windVal > 8.5 || tempVal > 27.5) {
-          coreColor = 'rgba(52, 211, 153, 0.85)';
-          outerColor = 'rgba(56, 189, 248, 0.55)';
+          coreColor = 'rgba(52, 211, 153, 0.48)';
+          outerColor = 'rgba(56, 189, 248, 0.28)';
         } else if (tempVal < 15) {
-          coreColor = 'rgba(186, 230, 253, 0.8)';
-          outerColor = 'rgba(56, 189, 248, 0.35)';
-          radius = 22;
+          coreColor = 'rgba(186, 230, 253, 0.45)';
+          outerColor = 'rgba(56, 189, 248, 0.20)';
+          radius = 18;
         }
 
         if (coreColor) {
           const grad = offCtx.createRadialGradient(px, py, 1, px, py, radius);
           grad.addColorStop(0, coreColor);
           grad.addColorStop(0.4, outerColor);
-          grad.addColorStop(0.8, 'rgba(56, 189, 248, 0.18)');
+          grad.addColorStop(0.8, 'rgba(56, 189, 248, 0.10)');
           grad.addColorStop(1, 'rgba(56, 189, 248, 0)');
 
           offCtx.fillStyle = grad;
@@ -682,6 +682,24 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
             title="ချုံ့ရန်"
           >
             <ZoomOut className="h-3.5 w-3.5" />
+          </button>
+
+          <div className="h-4 w-px bg-white/20" />
+
+          {/* Dedicated Fullscreen Toggle Button */}
+          <button
+            onClick={() => {
+              if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(() => {});
+              } else {
+                document.exitFullscreen().catch(() => {});
+              }
+            }}
+            className="flex items-center gap-1.5 rounded-full bg-emerald-600/80 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-500 active:scale-95 cursor-pointer"
+            title="မျက်နှာပြင်အပြည့်ဖွင့်ရန် (Shortcut: [F])"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+            <span className="hidden md:inline">Fullscreen</span>
           </button>
         </div>
       </div>

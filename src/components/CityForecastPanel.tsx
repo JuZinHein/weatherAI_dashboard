@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { CityInfo, ForecastDataset } from '../types/forecast';
 import { MapPin, Wind, Thermometer, TrendingUp, Compass, Calendar } from 'lucide-react';
-import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from '../utils/burmese';
+import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP, formatMyanmarTime } from '../utils/burmese';
 
 interface CityForecastPanelProps {
   dataset: ForecastDataset;
@@ -251,7 +251,9 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
               <tbody className="divide-y divide-white/5 font-mono">
                 {forecasts.map((f, i) => (
                   <tr key={i} className={`hover:bg-white/5 ${i === currentStepIndex ? 'bg-emerald-500/10 text-emerald-300 font-semibold' : 'text-slate-200'}`}>
-                    <td className="py-2 font-burmese">+{toBurmeseNumber(f.leadHours)} နာရီ ({f.validUtc ? f.validUtc.slice(11, 16) + ' UTC' : ''})</td>
+                    <td className="py-2 font-burmese">
+                      +{toBurmeseNumber(f.leadHours)} နာရီ ({f.validUtc ? formatMyanmarTime(f.validUtc, false) : ''})
+                    </td>
                     <td className="py-2 text-amber-400 font-bold">{toBurmeseNumber(f.temperatureC)}°C</td>
                     <td className="py-2 text-teal-400">{toBurmeseNumber(f.windKmh.toFixed(1))} km/h</td>
                     <td className="py-2 font-burmese">{f.windKmh > 12 ? 'မိုးရွာရန် အလားအလာရှိ' : 'မိုးနည်းပါး'}</td>

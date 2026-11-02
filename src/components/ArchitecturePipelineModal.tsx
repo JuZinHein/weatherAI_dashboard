@@ -249,6 +249,30 @@ export const ArchitecturePipelineModal: React.FC<ArchitecturePipelineModalProps>
                 </div>
               </div>
 
+              {/* Earth2Studio vs FourCastNet Clarification */}
+              <div className="rounded-2xl border border-indigo-500/30 bg-indigo-950/20 p-4 text-xs leading-relaxed">
+                <div className="flex items-center gap-2 mb-2 text-indigo-300 font-bold text-sm">
+                  <Cpu className="h-4 w-4 text-indigo-400" />
+                  <span>Earth2Studio လား FourCastNet လား? မည်သည့်အရာကို သုံးသင့်သနည်း။</span>
+                </div>
+                <div className="text-slate-300 space-y-1.5 font-burmese">
+                  <p>
+                    <strong className="text-white">အဖြေ:</strong> <span className="text-emerald-300 font-semibold">နှစ်ခုစလုံးကို တွဲဖက်အသုံးပြုရပါမည်။</span> တစ်ခုနှင့်တစ်ခု အပြိုင်မဟုတ်ဘဲ တာဝန်ခွဲခြားထားသော နည်းပညာများ ဖြစ်ပါသည်:
+                  </p>
+                  <ul className="list-disc list-inside space-y-1 text-slate-300 pl-1">
+                    <li>
+                      <span className="font-mono text-cyan-300 font-semibold">earth2studio</span>: NVIDIA ၏ Python Data Ingestion & Orchestration framework ဖြစ်သည်။ NOAA AWS GFS ကမ္ဘာလုံးဆိုင်ရာ 73-channel grid ကို အလိုအလျောက် ဆွဲယူပေးပြီး model အသင့်သုံး tensor အဖြစ် ပြင်ဆင်ပေးသော <em className="text-white">Data Pipeline</em> ဖြစ်သည်။
+                    </li>
+                    <li>
+                      <span className="font-mono text-emerald-300 font-semibold">FourCastNet (AFNO)</span>: NVIDIA ၏ အဓိက AI Deep Learning Neural Network ဖြစ်သည်။ earth2studio မှ ပေးပို့သော tensor ကို တွက်ချက်ကာ အနာဂတ် ရာသီဥတု လှုပ်ရှားမှုကို စက္ကန့်ပိုင်းအတွင်း ခန့်မှန်းပေးသော <em className="text-white">AI Model (Brain)</em> ဖြစ်သည်။
+                    </li>
+                  </ul>
+                  <p className="text-[11px] text-indigo-200/90 pt-1 border-t border-indigo-500/20">
+                    💡 ကနဦးဒေတာ ingestion အတွက် <strong>earth2studio</strong> ကို သုံးပြီး၊ prediction inference အတွက် <strong>FourCastNet</strong> ကို အသုံးပြုထားပါသည်။
+                  </p>
+                </div>
+              </div>
+
               {/* 6-Step Visual Cards Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {PIPELINE_STEPS.map((st) => (

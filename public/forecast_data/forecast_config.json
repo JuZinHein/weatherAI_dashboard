@@ -1,0 +1,88 @@
+{
+  "model": "NVIDIA FourCastNet v2 (NIM API)",
+  "pipeline_mode": "automated_cron",
+  "initialization_utc": "2026-11-02T00:00:00Z",
+  "updated_at": "2026-11-02T08:15:01.694840+00:00",
+  "bounds": {
+    "min_lat": 9.0,
+    "max_lat": 29.0,
+    "min_lon": 92.0,
+    "max_lon": 102.0,
+    "leaflet_bounds": [
+      [
+        9.0,
+        92.0
+      ],
+      [
+        29.0,
+        102.0
+      ]
+    ]
+  },
+  "colormaps": {
+    "temperature": "RdYlBu_r",
+    "wind": "viridis"
+  },
+  "steps": [
+    {
+      "lead_hour": 0,
+      "valid_time_utc": "2026-11-02T00:00:00Z",
+      "valid_time_myanmar": "02 Nov 2026 14:45 MMT",
+      "temperature_png": "/forecast_data/layers/temp_00h.png",
+      "wind_png": "/forecast_data/layers/wind_00h.png",
+      "min_temp_c": -7.08,
+      "max_temp_c": 29.42,
+      "max_wind_kmh": 24.03
+    },
+    {
+      "lead_hour": 6,
+      "valid_time_utc": "2026-11-02T06:00:00Z",
+      "valid_time_myanmar": "02 Nov 2026 20:45 MMT",
+      "temperature_png": "/forecast_data/layers/temp_06h.png",
+      "wind_png": "/forecast_data/layers/wind_06h.png",
+      "min_temp_c": 0.65,
+      "max_temp_c": 33.97,
+      "max_wind_kmh": 20.47
+    },
+    {
+      "lead_hour": 12,
+      "valid_time_utc": "2026-11-02T12:00:00Z",
+      "valid_time_myanmar": "03 Nov 2026 02:45 MMT",
+      "temperature_png": "/forecast_data/layers/temp_12h.png",
+      "wind_png": "/forecast_data/layers/wind_12h.png",
+      "min_temp_c": -3.29,
+      "max_temp_c": 30.79,
+      "max_wind_kmh": 78.5
+    },
+    {
+      "lead_hour": 18,
+      "valid_time_utc": "2026-11-02T18:00:00Z",
+      "valid_time_myanmar": "03 Nov 2026 08:45 MMT",
+      "temperature_png": "/forecast_data/layers/temp_18h.png",
+      "wind_png": "/forecast_data/layers/wind_18h.png",
+      "min_temp_c": -5.73,
+      "max_temp_c": 29.34,
+      "max_wind_kmh": 78.5
+    },
+    {
+      "lead_hour": 24,
+      "valid_time_utc": "2026-11-03T00:00:00Z",
+      "valid_time_myanmar": "03 Nov 2026 14:45 MMT",
+      "temperature_png": "/forecast_data/layers/temp_24h.png",
+      "wind_png": "/forecast_data/layers/wind_24h.png",
+      "min_temp_c": -6.14,
+      "max_temp_c": 29.06,
+      "max_wind_kmh": 78.5
+    },
+    {
+      "lead_hour": 30,
+      "valid_time_utc": "2026-11-03T06:00:00Z",
+      "valid_time_myanmar": "03 Nov 2026 20:45 MMT",
+      "temperature_png": "/forecast_data/layers/temp_30h.png",
+      "wind_png": "/forecast_data/layers/wind_30h.png",
+      "min_temp_c": -0.07,
+      "max_temp_c": 33.68,
+      "max_wind_kmh": 78.5
+    }
+  ]
+}

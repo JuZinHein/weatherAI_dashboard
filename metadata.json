@@ -1,0 +1,8 @@
+{
+  "name": "Remix NVIDIA FourCastNet Myanmar AI Weather Showcase",
+  "description": "Interactive offline weather showcase and 3D satellite globe for NVIDIA FourCastNet regional forecasts across Myanmar with automated animation, interactive city metrics, and custom data ingestion.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

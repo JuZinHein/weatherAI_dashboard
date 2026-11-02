@@ -1,0 +1,6 @@
+lead_hours,valid_utc,valid_myanmar,city,forecast_mode,temperature_c,wind_kmh,is_future_at_display,hours_ahead_at_display,type
+6,2026-11-02 06:00 UTC,2026-11-02 12:30 MMT,Yangon,future,31.79,2.15,True,2.17,FCN forecast
+12,2026-11-02 12:00 UTC,2026-11-02 18:30 MMT,Yangon,future,29.99,4.64,True,8.17,FCN forecast
+18,2026-11-02 18:00 UTC,2026-11-03 00:30 MMT,Yangon,future,27.85,3.25,True,14.17,FCN forecast
+24,2026-11-03 00:00 UTC,2026-11-03 06:30 MMT,Yangon,future,27.24,3.37,True,20.17,FCN forecast
+30,2026-11-03 06:00 UTC,2026-11-03 12:30 MMT,Yangon,future,31.09,6.82,True,26.17,FCN forecast

@@ -552,6 +552,7 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                       )}
 
                       {/* X-Axis Time Label */}
+                      {(numSteps <= 8 || i % Math.ceil(numSteps / 8) === 0 || isCurrent) && (
                       <text
                         x={cx}
                         y={chartH - 12}
@@ -560,14 +561,17 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                           isCurrent ? 'font-bold fill-emerald-400' : 'fill-slate-400'
                         }`}
                       >
-                        {getStepTimeWindow(dataset.validTimesUtc, i)?.shortLabel ?? `${hour}h`}
+                        {(numSteps <= 8
+                          ? getStepTimeWindow(dataset.validTimesUtc, i)?.shortLabel
+                          : getStepTimeWindow(dataset.validTimesUtc, i)?.dateLabel) ?? `${hour}h`}
                       </text>
+                      )}
 
                       {/* Primary Node (Circle) */}
                       <circle
                         cx={cx}
                         cy={cyP}
-                        r={isCurrent ? 6.5 : 4.5}
+                        r={isCurrent ? 6.5 : numSteps > 8 ? 2.5 : 4.5}
                         fill={primaryVar.color}
                         stroke="#ffffff"
                         strokeWidth="1.5"
@@ -629,7 +633,7 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
             <div>
               <h4 className="font-display text-sm font-bold text-white">
-                {mmCityName} · ၃၀ နာရီ ခန့်မှန်းချက် အသေးစိတ်ဇယား (Detailed Atmospheric Rollout)
+                {mmCityName} · {toBurmeseNumber(dataset.leadHours[dataset.leadHours.length - 1] ?? 0)} နာရီ ခန့်မှန်းချက် အသေးစိတ်ဇယား (Detailed Atmospheric Rollout)
               </h4>
               <p className="text-xs text-slate-400">
                 ရွေးချယ်ထားသော ကဏ္ဍအလိုက် အနာဂတ် ရာသီဥတု ညွှန်းကိန်းများအားလုံး ပြသထားပါသည်

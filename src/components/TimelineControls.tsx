@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Clock, Repeat, CloudRain, ChevronUp, ChevronDown, Maximize2 } from 'lucide-react';
 import { ForecastDataset, CityInfo } from '../types/forecast';
 import { BURMESE_STRINGS, BURMESE_CITIES_MAP } from '../utils/burmese';
@@ -33,6 +33,15 @@ export const TimelineControls: React.FC<TimelineControlsProps> = ({
   const steps = dataset.leadHours;
   const currentLead = steps[currentStepIndex] ?? 0;
   const currentWindow = getStepTimeWindow(dataset.validTimesUtc, currentStepIndex);
+  const longForecast = steps.length > 8;
+  const scrubberRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const root = scrubberRef.current;
+    if (!root) return;
+    const selected = root.querySelector<HTMLElement>('[data-step-selected="true"]');
+    selected?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  }, [currentStepIndex, steps.length]);
 
   const handlePrev = () => {
     onSelectStepIndex((currentStepIndex - 1 + steps.length) % steps.length);
@@ -164,14 +173,57 @@ export const TimelineControls: React.FC<TimelineControlsProps> = ({
             </button>
           </div>
 
-          {/* Time-window scrubber: e.g. 3-11-2026 (00:00 to 06:00) */}
-          <div className="flex items-center gap-1.5 overflow-x-auto max-w-[min(100%,42rem)]">
+          {/* Short runs (≤30 h, 6 steps) keep one button per window.
+              Longer runs (up to 14 days) use a slider plus a scrolling strip. */}
+          {longForecast ? (
+            <div className="flex min-w-[12rem] flex-1 flex-col gap-1">
+              <input
+                type="range"
+                min={0}
+                max={Math.max(0, steps.length - 1)}
+                value={Math.min(currentStepIndex, Math.max(0, steps.length - 1))}
+                onChange={(e) => onSelectStepIndex(Number(e.target.value))}
+                className="h-1.5 w-full cursor-pointer accent-emerald-500"
+                aria-label="ခန့်မှန်းချက် အဆင့်"
+              />
+              <div ref={scrubberRef} className="flex items-center gap-1 overflow-x-auto max-w-[min(100%,42rem)]">
+                {steps.map((lead, idx) => {
+                  const isSelected = idx === currentStepIndex;
+                  const win = getStepTimeWindow(dataset.validTimesUtc, idx);
+                  const prev = idx > 0 ? getStepTimeWindow(dataset.validTimesUtc, idx - 1) : null;
+                  const showDate = !prev || prev.dateLabel !== win?.dateLabel;
+                  return (
+                    <button
+                      key={`${lead}-${idx}`}
+                      data-step-selected={isSelected ? 'true' : 'false'}
+                      onClick={() => onSelectStepIndex(idx)}
+                      title={win?.label}
+                      className={`flex shrink-0 flex-col items-center justify-center rounded-lg px-1.5 py-0.5 transition-all ${
+                        isSelected
+                          ? 'bg-emerald-600 text-white shadow-md'
+                          : 'bg-white/5 hover:bg-white/15 text-slate-300'
+                      }`}
+                    >
+                      <span className={`text-[8px] leading-tight ${isSelected ? 'text-emerald-100' : 'text-slate-500'}`}>
+                        {showDate ? win?.dateLabel ?? '' : ''}
+                      </span>
+                      <span className="font-mono text-[10px] font-bold leading-tight whitespace-nowrap">
+                        {win?.shortLabel ?? `${lead}h`}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+          <div ref={scrubberRef} className="flex items-center gap-1.5 overflow-x-auto max-w-[min(100%,42rem)]">
             {steps.map((lead, idx) => {
               const isSelected = idx === currentStepIndex;
               const win = getStepTimeWindow(dataset.validTimesUtc, idx);
               return (
                 <button
                   key={`${lead}-${idx}`}
+                  data-step-selected={isSelected ? 'true' : 'false'}
                   onClick={() => onSelectStepIndex(idx)}
                   title={win?.label}
                   className={`flex flex-col items-center justify-center rounded-xl px-2.5 py-1 transition-all min-w-[4.5rem] ${
@@ -190,6 +242,7 @@ export const TimelineControls: React.FC<TimelineControlsProps> = ({
               );
             })}
           </div>
+          )}
 
           {/* Full selected window */}
           <div className="hidden sm:flex items-center gap-2 rounded-xl bg-white/5 px-3 py-1.5 text-xs">

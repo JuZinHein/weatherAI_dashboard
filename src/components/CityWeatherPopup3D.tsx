@@ -106,19 +106,21 @@ export const CityWeatherPopup3D: React.FC<CityWeatherPopup3DProps> = ({
         </div>
       </div>
 
-      {/* 30-Hour Rollout Mini Strip for this City */}
+      {/* Rollout strip — 6 windows for a 30 h zip, scrolling row when the run is longer */}
       <div className="mt-4 border-t border-white/10 pt-3">
         <div className="text-[11px] font-semibold text-slate-300 mb-2">
-          NVIDIA FourCastNet ၃၀ နာရီ ခန့်မှန်းချက် အဆင့်များ:
+          NVIDIA FourCastNet {toBurmeseNumber(city.forecasts[city.forecasts.length - 1]?.leadHours ?? 0)} နာရီ ခန့်မှန်းချက် အဆင့်များ:
         </div>
-        <div className="grid grid-cols-6 gap-1">
+        <div className={city.forecasts.length > 8 ? 'flex gap-1 overflow-x-auto pb-1' : 'grid grid-cols-6 gap-1'}>
           {city.forecasts.map((f, idx) => {
             const isStepActive = idx === currentStepIndex;
             const win = getStepTimeWindow(stepTimes, idx);
             return (
               <div
-                key={f.leadHours}
+                key={`${f.leadHours}-${idx}`}
                 className={`flex flex-col items-center justify-center rounded-lg p-1 text-center transition ${
+                  city.forecasts.length > 8 ? 'min-w-[3.4rem] shrink-0' : ''
+                } ${
                   isStepActive
                     ? 'bg-emerald-600 text-white font-bold ring-1 ring-emerald-400'
                     : 'bg-white/5 text-slate-300'

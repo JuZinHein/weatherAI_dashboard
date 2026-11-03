@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ForecastDataset, ViewMode, MapLayer, CityInfo, StormAlert } from './types/forecast';
-import { loadCurrentDataset, saveCustomDataset, clearCustomDataset, DEFAULT_FORECAST_DATA } from './data/defaultForecast';
+import { loadCurrentDataset, loadLargeDataset, saveCustomDataset, clearCustomDataset, DEFAULT_FORECAST_DATA } from './data/defaultForecast';
 import { ShowcaseHeader } from './components/ShowcaseHeader';
 import { OverviewStrip } from './components/OverviewStrip';
 import { ForecastMap2D } from './components/ForecastMap2D';
@@ -32,6 +32,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [autoLoop, setAutoLoop] = useState<boolean>(true);
+  const ignoreStoredLoad = useRef(false);
 
   // Selected city (default Yangon)
   const [selectedCity, setSelectedCity] = useState<CityInfo>(() => {
@@ -83,6 +84,28 @@ export default function App() {
       });
     }
   }, []);
+
+  // Long zips (14 days) do not fit in localStorage; restore them from IndexedDB.
+  useEffect(() => {
+    let cancelled = false;
+    loadLargeDataset().then((saved) => {
+      if (cancelled || ignoreStoredLoad.current || !saved) return;
+      setDataset(saved);
+      setCurrentStepIndex(0);
+      if (saved.cityForecasts?.[0]) setSelectedCity(saved.cityForecasts[0]);
+      if (saved.stormAlert) setStormAlert(saved.stormAlert);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    setCurrentStepIndex((prev) => {
+      const last = Math.max(0, dataset.leadHours.length - 1);
+      return Math.min(prev, last);
+    });
+  }, [dataset.leadHours.length]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -205,6 +228,7 @@ export default function App() {
   }, []);
 
   const handleApplyDataset = (newDataset: ForecastDataset) => {
+    ignoreStoredLoad.current = true;
     setDataset(newDataset);
     saveCustomDataset(newDataset);
     setCurrentStepIndex(0);
@@ -217,6 +241,7 @@ export default function App() {
   };
 
   const handleResetDefault = () => {
+    ignoreStoredLoad.current = true;
     clearCustomDataset();
     setDataset(DEFAULT_FORECAST_DATA);
     setCurrentStepIndex(1);

@@ -86,7 +86,7 @@ This is the GPU export that the showcase UI is built to load. It does **not** ru
 2. Run **Installation — FCN dependencies only** once. If it fails, read `/content/earth2_fcn_install.log`.
 3. **Restart the session**, then continue from **Imports and GPU check**.
 4. Run the cells through the Gradio dashboard.
-5. On **Run NVIDIA AI forecast**, keep **30 hours** (default). That writes lead times **0, 6, 12, 18, 24, 30** — the same windows the showcase timeline plays. Other lengths (6 / 12 / 24 / 48, or the future-day tab up to 7 days) still load; the timeline just grows with the zip.
+5. On **Run NVIDIA AI forecast**, keep **30 hours** (default). That writes lead times **0, 6, 12, 18, 24, 30** and the timeline stays a row of window buttons. For a longer run, open **Predict future weather** and choose **Next 14 days — 336 hours** (or any length from 6 hours through 14 days). The zip still drops onto the same UI: more than 8 steps switches the player to a slider plus a scrolling strip. A 14-day Colab run is many GPU steps — use a large GPU and expect a longer wait.
 6. Download `NVIDIA_FCN_Myanmar_*_Forecast.zip`.
 7. In the local app (`npm run dev` → http://localhost:3000), upload or drag that zip onto the header.
 

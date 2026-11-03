@@ -92,7 +92,7 @@ This is the GPU export the UI is built to load. It does **not** run inside `npm 
 2. Run **Installation — FCN dependencies only** once. On failure, read `/content/earth2_fcn_install.log`.
 3. **Restart the session**, then continue from **Imports and GPU check**.
 4. Run through the Gradio dashboard.
-5. On **Run NVIDIA AI forecast**, keep **30 hours** (default) so lead times are `0, 6, 12, 18, 24, 30` — the same windows the showcase timeline plays. Other lengths still load; the timeline just grows with the zip.
+5. On **Run NVIDIA AI forecast**, keep **30 hours** (default) so lead times are `0, 6, 12, 18, 24, 30` and the timeline stays one button per window. **Predict future weather** accepts **1–14 days** (up to 336 hours). More than 8 steps switches the player to a slider and a scrolling strip; city charts label days instead of every 6-hour tick. A 14-day GPU run is slower and needs a large GPU.
 6. Download `NVIDIA_FCN_Myanmar_*_Forecast.zip` and drop it on the local UI header.
 
 | Notebook output | What the UI reads |

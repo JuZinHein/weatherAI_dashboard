@@ -158,6 +158,28 @@ export async function parseForecastZip(file: File): Promise<ForecastDataset> {
 
         temperatureGrid = newTempGrid;
         windGrid = newWindGrid;
+
+        const latNpy = Object.values(loadedNpz.files).find((f) => f.name.endsWith('lat.npy'));
+        const lonNpy = Object.values(loadedNpz.files).find((f) => f.name.endsWith('lon.npy'));
+        if (latNpy && lonNpy) {
+          const parsedLat = parseNpyBuffer(await latNpy.async('arraybuffer'));
+          const parsedLon = parseNpyBuffer(await lonNpy.async('arraybuffer'));
+          if (!Array.isArray(parsedLat.data) && !Array.isArray(parsedLon.data)) {
+            lats = Array.from(parsedLat.data as ArrayLike<number>).map(Number);
+            lons = Array.from(parsedLon.data as ArrayLike<number>).map(Number);
+            // sampleGrid expects row 0 = 29°N (north → south) and col 0 = 92°E (west → east).
+            if (lats.length > 1 && lats[0] < lats[lats.length - 1]) {
+              lats = [...lats].reverse();
+              temperatureGrid = temperatureGrid.map((step) => [...step].reverse());
+              windGrid = windGrid.map((step) => [...step].reverse());
+            }
+            if (lons.length > 1 && lons[0] > lons[lons.length - 1]) {
+              lons = [...lons].reverse();
+              temperatureGrid = temperatureGrid.map((step) => step.map((row) => [...row].reverse()));
+              windGrid = windGrid.map((step) => step.map((row) => [...row].reverse()));
+            }
+          }
+        }
       }
     } catch (err) {
       console.warn('Failed to parse inner regional_forecast.npz', err);

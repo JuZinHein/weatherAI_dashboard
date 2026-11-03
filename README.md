@@ -1,8 +1,8 @@
 # Local NVIDIA FourCastNet Myanmar AI Weather Showcase
 
-Open, local-first React + Express showcase for **NVIDIA FourCastNet** regional forecasts over Myanmar.
+Private office showcase: local-first React + Express UI for **NVIDIA FourCastNet** regional forecasts over Myanmar.
 
-This repo is **public and free to use**. Clone it, run it offline with the bundled sample, or drop in a Colab/Kaggle forecast `.zip`. No NVIDIA API key is required to run the UI.
+Keep the repo private. Run it offline with the bundled sample, or drop in a Colab/Kaggle forecast `.zip`. No NVIDIA API key is required to run the UI. This is a demonstration build, not a public product release.
 
 Deep dive: [`how_this_works.md`](how_this_works.md)
 
@@ -14,14 +14,7 @@ Deep dive: [`how_this_works.md`](how_this_works.md)
 | Storm / cyclone HUD | **Not a separate NVIDIA cyclone model** — a post-process rule on FCN wind in the Bay of Bengal (≥ **65 km/h**) written into `storm_alert.json` |
 | Web app | Displays precomputed zip / bundled assets only — **does not call NVIDIA NIM** in this local build |
 
-Research / software showcase. Local forecast skill has **not** been formally validated here.
-
-## Open for everyone
-
-- Repo: https://github.com/hmtun-ai/Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase  
-- License: [MIT](LICENSE) for this showcase code  
-- NVIDIA FourCastNet / Earth2Studio remain under their own upstream licenses and terms  
-- No account or paid API needed to **view** the demo UI locally  
+Internal research / software showcase. Local forecast skill has **not** been formally validated here.
 
 ## Requirements
 
@@ -35,7 +28,6 @@ Research / software showcase. Local forecast skill has **not** been formally val
 ## Quick start
 
 ```bash
-git clone https://github.com/hmtun-ai/Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase.git
 cd Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase
 
 npm install
@@ -57,7 +49,7 @@ Bundled data under `public/forecast_data/` and `src/data/` loads immediately. Up
 
 ```text
 Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/
-  server.ts                 Express + Vite (serves UI; GET /api/storm-alert)
+  server.ts                 Express + Vite (serves UI + local storm_alert.json)
   notebook/                 Colab / Kaggle GPU export notebooks → forecast .zip
   public/
     forecast_data/          bundled sample layers, configs, storm_alert.json
@@ -69,7 +61,6 @@ Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/
     utils/                  zip / npy parsers, Burmese time windows, geo
   how_this_works.md
   README.md
-  LICENSE
 ```
 
 ## UI features
@@ -85,26 +76,51 @@ Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/
 | Storm HUD | `storm_alert.json` (`alert_active`) → cyclone card + map marker |
 | Globe spin | slower default + speed slider (နှေး ↔ မြန်) |
 
-## Forecast zip (how new predictions are made)
+## Make a new forecast zip (Colab)
 
-Notebooks in `notebook/` (and sibling Colab/Kaggle export notebooks):
+Notebook: [`notebook/NVIDIA_Earth2_GPU_Colab_Myanmar.ipynb`](notebook/NVIDIA_Earth2_GPU_Colab_Myanmar.ipynb)
 
-1. Ingest latest **GFS** via Earth2Studio  
-2. Run **NVIDIA FourCastNet** on GPU  
-3. Crop to Myanmar (Lat 9–29°N, Lon 92–102°E)  
-4. Scan Bay of Bengal wind (Lat 10–22, Lon 92–96); if ≥ 65 km/h → `storm_alert.json`  
-5. Pack `regional_forecast.npz`, CSVs, PNGs, `metadata.json`, `storm_alert.json` into a zip  
+This is the GPU export that the showcase UI is built to load. It does **not** run inside `npm run dev`. Run it on Google Colab (or a CUDA machine), download the zip, then drop that zip on the local UI.
 
-Drop that zip into the showcase. The browser **does not** re-run FCN or the storm scan — it only displays what the zip (or bundled sample) already contains.
+1. Upload the notebook to [Google Colab](https://colab.research.google.com/) and set **Runtime → Change runtime type → GPU**.
+2. Run **Installation — FCN dependencies only** once. If it fails, read `/content/earth2_fcn_install.log`.
+3. **Restart the session**, then continue from **Imports and GPU check**.
+4. Run the cells through the Gradio dashboard.
+5. On **Run NVIDIA AI forecast**, keep **30 hours** (default). That writes lead times **0, 6, 12, 18, 24, 30** — the same windows the showcase timeline plays. Other lengths (6 / 12 / 24 / 48, or the future-day tab up to 7 days) still load; the timeline just grows with the zip.
+6. Download `NVIDIA_FCN_Myanmar_*_Forecast.zip`.
+7. In the local app (`npm run dev` → http://localhost:3000), upload or drag that zip onto the header.
 
-Expected zip files:
+The notebook does the model run. The website only displays the zip.
 
-- `regional_forecast.npz` (temp + wind grids)  
-- `metadata.json`  
-- `storm_alert.json` (optional but needed for cyclone HUD from that run)  
-- `all_steps_with_future_flags.csv` / map & trend PNGs  
+| Notebook output | What the UI reads |
+| --- | --- |
+| `t2m` → `temperature_c` (°C) | temperature maps, city °C |
+| `u10m` + `v10m` → `wind_kmh` | wind maps, city km/h |
+| Lat **29°N → 9°N**, Lon **92°E → 102°E**, step **0.25°** (81 × 41) | `sampleGrid` in `src/utils/geo.ts` (row 0 is north) |
+| 12 cities below | `src/data/forecastData.json` + `src/utils/burmese.ts` |
+| BoB scan Lat **10–22**, Lon **92–96**, peak **≥ 65 km/h** | `storm_alert.json` → cyclone card |
+| `regional_forecast.npz`, `metadata.json`, `storm_alert.json`, `all_steps_with_future_flags.csv`, PNGs | `src/utils/zipForecastParser.ts` |
 
-If a zip has **no** `storm_alert.json`, the app keeps the bundled alert (or none after reset) — it will **not** invent an alert from the wind grid alone.
+City ping points (lat, lon), same in the notebook `CITIES` dict and the UI:
+
+| City | Lat | Lon |
+| --- | --- | --- |
+| Yangon | 16.8661 | 96.1951 |
+| Mandalay | 21.9750 | 96.0833 |
+| Nay Pyi Taw | 19.7633 | 96.0785 |
+| Taunggyi | 20.7833 | 97.0333 |
+| Mawlamyine | 16.4905 | 97.6283 |
+| Bago | 17.3221 | 96.4660 |
+| Pathein | 16.7797 | 94.7324 |
+| Sittwe | 20.1462 | 92.8983 |
+| Monywa | 22.1086 | 95.1378 |
+| Myitkyina | 25.3833 | 97.4000 |
+| Dawei | 14.0833 | 98.2000 |
+| Pyin Oo Lwin | 22.0333 | 96.4667 |
+
+The zip’s CSV is the city you picked in Colab. After upload, the UI **re-samples all 12 cities** from the temperature and wind grids at these coordinates, so every city on the globe updates from that run.
+
+If a zip has **no** `storm_alert.json`, the app keeps the bundled alert (or none after reset). It does not invent an alert from the wind grid in the browser.
 
 ## Storm alert (honest summary)
 
@@ -118,16 +134,16 @@ Notebook scan: BoB box, peak wind ≥ 65 km/h?
 storm_alert.json  →  showcase HUD / map marker
 ```
 
-- **Wind values** = NVIDIA FourCastNet  
-- **Alert on/off** = threshold rule on those winds (IMD/DMH-style 65 km/h floor), not a dedicated cyclone tracker  
+- **Wind values** = NVIDIA FourCastNet (`u10m`, `v10m` → km/h)  
+- **Alert on/off** = a showcase rule on those winds inside the Bay of Bengal box, not NVIDIA StormScope and not a DMH bulletin  
 
-## Server API
+The **65 km/h** floor is the code’s round number for the North Indian Ocean **cyclonic storm** class, which starts at **34 knots (62–88 km/h)** in the IMD / WMO–ESCAP Panel tables. Myanmar’s national row in that same plan uses the same 34-knot floor. This app does not track a cyclone eye or issue an official warning.
 
-| Method | Path | What |
-| --- | --- | --- |
-| `GET` | `/api/storm-alert` | reads bundled `public/forecast_data/storm_alert.json` |
+## Local storm alert file
 
-Zip uploads override the alert in the browser only (no server write).
+On startup the local Express server reads `public/forecast_data/storm_alert.json` and the UI loads that bundled cyclone card. There is **no NVIDIA cloud call** for this.
+
+Zip uploads replace the alert **in the browser only** — nothing is written back to disk.
 
 ## Bounds
 
@@ -139,10 +155,53 @@ Zip uploads override the alert in the browser only (no server write).
 | Cyclone threshold | **≥ 65 km/h** |
 | Model fields in zip | **2 m temperature**, **10 m wind** |
 
-## Attribution
+## References
 
-- Showcase UI & docs: this repository (MIT)  
-- **NVIDIA FourCastNet** / **Earth2Studio**: NVIDIA / upstream projects  
-- Initial conditions: **NOAA GFS**  
+These are the sources this showcase and the Colab notebook are built from. The local UI does not call them at runtime.
 
-Please keep upstream credits when you fork or present this work.
+### Model and article
+
+| What we run | Link |
+| --- | --- |
+| **FourCastNet** paper (Pathak et al., 2022) — AFNO global model, 0.25°, 6-hour steps | https://arxiv.org/abs/2202.11214 |
+| Earth2Studio `FCN` class (the weights this notebook loads, not FourCastNet 3) | https://github.com/NVIDIA/earth2studio/blob/main/earth2studio/models/px/fcn.py |
+| Prognostic model list (`FCN`, and `StormScope*` further down) | https://nvidia.github.io/earth2studio/main/modules/models_px/ |
+| Earth2Studio docs | https://nvidia.github.io/earth2studio/main/ |
+| Earth2Studio repository | https://github.com/NVIDIA/earth2studio |
+| NVIDIA Earth-2 | https://www.nvidia.com/en-us/high-performance-computing/earth-2/ |
+
+Installed pin in the notebook: `earth2studio[fcn]==0.20.0`. Inference uses `t2m`, `u10m`, and `v10m` only. The other FCN input channels stay inside the model.
+
+### Initial conditions
+
+| What | Link |
+| --- | --- |
+| NOAA GFS on AWS (`noaa-gfs-bdp-pds`, 0.25° `pgrb2`) | https://registry.opendata.aws/noaa-gfs-bdp-pds/ |
+| GFS product description | https://www.ncei.noaa.gov/products/weather-climate-models/global-forecast |
+| Example object the notebook checks | `https://noaa-gfs-bdp-pds.s3.amazonaws.com/gfs.{YYYYMMDD}/{HH}/atmos/gfs.t{HH}z.pgrb2.0p25.f000` |
+
+### Storm scan vs StormScope
+
+**In this project.** After FCN finishes, the notebook scans 10 m wind on Lat **10–22°N**, Lon **92–96°E** (Bay of Bengal, west of the Myanmar coast). If the peak is **≥ 65 km/h**, it writes `storm_alert.json`. The website only displays that file.
+
+**Why StormScope is out of scope.** [StormScope](https://nvidia.github.io/earth2studio/main/examples/04_nowcasting/03_stormscope_goes_example/) is a different Earth2Studio family (`StormScopeGOES` / `StormScopeMRMS`). It does short-range **satellite and radar nowcasting**, not the same job as this showcase.
+
+| | This showcase (FourCastNet) | StormScope |
+| --- | --- | --- |
+| Job | Medium-range **weather rollout** from GFS (hours → ~day) | Minutes-scale **nowcast** of satellite / radar fields |
+| Inputs | NOAA **GFS** initial state | **GOES** imagery + **MRMS** radar (and related conditioning) |
+| Extra packages | `earth2studio[fcn]` only | Needs StormScope stacks such as **Earth2Grid** / **NATTEN** |
+| Geography in examples | Myanmar crop + Bay of Bengal wind box | Official example is CONUS-style GOES/MRMS nowcasting |
+| Cyclone HUD here | Peak FCN 10 m wind ≥ 65 km/h → JSON | Not used |
+
+So StormScope is out of scope on purpose: this repo is a **zip-first FourCastNet Myanmar temperature/wind demo**. Pulling StormScope in would mean a second model, different data pipelines, heavier installs, and a different product (nowcasting), not a better version of the same cyclone card. The notebook install cell explicitly skips StormScope extras so a failed StormScope environment does not break the FCN run. The cyclone banner remains the wind-threshold JSON above — not a StormScope nowcast and not a DMH warning.
+
+| Threshold source | What it says |
+| --- | --- |
+| [IMD terminology (RSMC New Delhi)](https://rsmcnewdelhi.imd.gov.in/images/pdf/terminology.pdf) | Cyclonic storm: **34–47 knots (62–88 km/h)** |
+| [WMO/ESCAP Panel TCP-21 (2021)](https://mausam.imd.gov.in/ptc/TCP/TCP2021.pdf) | Same 34-knot floor; **Myanmar** national table matches it |
+| [DMH Myanmar](https://www.moezala.gov.mm/) | National meteorological service. This repo does not scrape or replace DMH warnings |
+
+### Attribution
+
+Private office showcase code. FourCastNet, Earth2Studio, GFS, and the IMD/WMO documents stay under their own upstream licenses and terms. Keep those credits when presenting this work.

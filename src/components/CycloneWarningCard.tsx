@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { StormAlert } from '../types/forecast';
-import { toBurmeseNumber, formatMyanmarTime } from '../utils/burmese';
+import { toBurmeseNumber } from '../utils/burmese';
+import { formatTimeWindow, parseForecastUtc } from '../utils/forecastTime';
 import { AlertTriangle, Wind, Compass, ShieldAlert, X, ChevronRight, MapPin, Radio, Activity } from 'lucide-react';
 
 interface CycloneWarningCardProps {
@@ -58,8 +59,13 @@ export const CycloneWarningCard: React.FC<CycloneWarningCardProps> = ({
               <span className="rounded-full bg-rose-500/30 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider text-rose-300 border border-rose-500/40">
                 CYCLONE ALERT
               </span>
-              <span className="text-[10px] font-burmese text-rose-300/80">
-                +{toBurmeseNumber(alert.lead_hour)}h ({formatMyanmarTime(alert.timestamp, false)})
+              <span className="text-[10px] font-mono text-rose-300/80">
+                {(() => {
+                  const start = parseForecastUtc(alert.timestamp);
+                  if (!start) return alert.timestamp;
+                  const end = new Date(start.getTime() + 6 * 3600 * 1000);
+                  return formatTimeWindow(start, end);
+                })()}
               </span>
             </div>
             <h3 className="font-display text-xs sm:text-sm font-bold text-white mt-0.5">

@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { ForecastDataset, CityInfo, CsvStepRow } from '../types/forecast';
+import { ForecastDataset, CsvStepRow, StormAlert } from '../types/forecast';
 import { parseNpyBuffer } from './npyParser';
 import { sampleGrid } from './geo';
 import { DEFAULT_FORECAST_DATA } from '../data/defaultForecast';
@@ -171,7 +171,18 @@ export async function parseForecastZip(file: File): Promise<ForecastDataset> {
     maxWind = DEFAULT_FORECAST_DATA.stats.maxWind;
   }
 
-  // 5. Compute city forecasts across all lead times using the grid
+  // 5. Optional storm_alert.json from the export zip
+  let stormAlert: StormAlert | null = null;
+  const stormEntry = Object.values(loadedZip.files).find((f) => f.name.endsWith('storm_alert.json'));
+  if (stormEntry) {
+    try {
+      stormAlert = JSON.parse(await stormEntry.async('text')) as StormAlert;
+    } catch (e) {
+      console.warn('Failed to parse storm_alert.json in zip', e);
+    }
+  }
+
+  // 6. Compute city forecasts across all lead times using the grid
   const cityForecasts = DEFAULT_FORECAST_DATA.cityForecasts.map((city) => {
     const forecasts = leadHours.map((lh, t) => {
       const stepGrid = temperatureGrid[t] || temperatureGrid[0];
@@ -211,5 +222,6 @@ export async function parseForecastZip(file: File): Promise<ForecastDataset> {
     cityForecasts,
     benchmarkMyanmarMapUrl,
     benchmarkCityTrendUrl,
+    stormAlert,
   };
 }

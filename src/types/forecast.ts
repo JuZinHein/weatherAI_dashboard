@@ -77,6 +77,7 @@ export interface ForecastDataset {
   cityForecasts: CityInfo[];
   benchmarkMyanmarMapUrl?: string;
   benchmarkCityTrendUrl?: string;
+  stormAlert?: StormAlert | null;
 }
 
 export type ViewMode = 'satellite_radar' | 'globe_3d' | 'city_trends';
@@ -113,7 +114,6 @@ export interface ForecastConfigStep {
 
 export interface ForecastConfig {
   model: string;
-  pipeline_mode: string;
   initialization_utc: string;
   updated_at: string;
   bounds: {

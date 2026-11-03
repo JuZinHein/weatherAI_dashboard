@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Clock, Repeat, CloudRain, ChevronUp, ChevronDown, Maximize2 } from 'lucide-react';
 import { ForecastDataset, CityInfo } from '../types/forecast';
-import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP, formatMyanmarTime } from '../utils/burmese';
+import { BURMESE_STRINGS, BURMESE_CITIES_MAP } from '../utils/burmese';
+import { getStepTimeWindow } from '../utils/forecastTime';
 
 interface TimelineControlsProps {
   dataset: ForecastDataset;
@@ -31,7 +32,7 @@ export const TimelineControls: React.FC<TimelineControlsProps> = ({
   const [showPrecipitation, setShowPrecipitation] = useState(false);
   const steps = dataset.leadHours;
   const currentLead = steps[currentStepIndex] ?? 0;
-  const currentUtc = dataset.validTimesUtc[currentStepIndex] || '';
+  const currentWindow = getStepTimeWindow(dataset.validTimesUtc, currentStepIndex);
 
   const handlePrev = () => {
     onSelectStepIndex((currentStepIndex - 1 + steps.length) % steps.length);
@@ -163,38 +164,41 @@ export const TimelineControls: React.FC<TimelineControlsProps> = ({
             </button>
           </div>
 
-          {/* Lead Step Scrubber in Burmese Numbers */}
-          <div className="flex items-center gap-1.5 overflow-x-auto">
+          {/* Time-window scrubber: e.g. 3-11-2026 (00:00 to 06:00) */}
+          <div className="flex items-center gap-1.5 overflow-x-auto max-w-[min(100%,42rem)]">
             {steps.map((lead, idx) => {
               const isSelected = idx === currentStepIndex;
-              const isInit = lead === 0;
+              const win = getStepTimeWindow(dataset.validTimesUtc, idx);
               return (
                 <button
-                  key={lead}
+                  key={`${lead}-${idx}`}
                   onClick={() => onSelectStepIndex(idx)}
-                  className={`flex flex-col items-center justify-center rounded-xl px-2.5 py-1 transition-all ${
+                  title={win?.label}
+                  className={`flex flex-col items-center justify-center rounded-xl px-2.5 py-1 transition-all min-w-[4.5rem] ${
                     isSelected
                       ? 'bg-emerald-600 text-white shadow-md'
                       : 'bg-white/5 hover:bg-white/15 text-slate-300'
                   }`}
                 >
-                  <span className="font-mono text-xs font-bold leading-tight">
-                    +{toBurmeseNumber(lead)}h
+                  <span className={`text-[9px] leading-tight ${isSelected ? 'text-emerald-100' : 'text-slate-400'}`}>
+                    {win?.dateLabel ?? `T${idx}`}
                   </span>
-                  <span className={`text-[9px] ${isSelected ? 'text-emerald-100' : 'text-slate-400'}`}>
-                    {isInit ? 'GFS' : 'AI'}
+                  <span className="font-mono text-[10px] font-bold leading-tight whitespace-nowrap">
+                    {win?.shortLabel ?? `${lead}h`}
                   </span>
                 </button>
               );
             })}
           </div>
 
-          {/* Valid Time in Myanmar Standard Time */}
+          {/* Full selected window */}
           <div className="hidden sm:flex items-center gap-2 rounded-xl bg-white/5 px-3 py-1.5 text-xs">
             <Clock className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
             <div className="text-right">
-              <span className="text-[10px] text-emerald-300 block leading-tight font-burmese">{formatMyanmarTime(currentUtc, true)}</span>
-              <span className="font-semibold text-white font-mono text-[11px]">+{toBurmeseNumber(currentLead)} နာရီ ခန့်မှန်းချက်</span>
+              <span className="text-[10px] text-emerald-300 block leading-tight">ခန့်မှန်းချိန်ကာလ</span>
+              <span className="font-semibold text-white font-mono text-[11px] whitespace-nowrap">
+                {currentWindow?.label ?? '—'}
+              </span>
             </div>
           </div>
 

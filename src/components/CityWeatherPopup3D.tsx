@@ -1,6 +1,7 @@
 import React from 'react';
 import { CityInfo } from '../types/forecast';
 import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from '../utils/burmese';
+import { getStepTimeWindow } from '../utils/forecastTime';
 import { X, Thermometer, Wind, Gauge, Droplets, Navigation, Check } from 'lucide-react';
 
 interface CityWeatherPopup3DProps {
@@ -21,6 +22,8 @@ export const CityWeatherPopup3D: React.FC<CityWeatherPopup3DProps> = ({
   const currentF = city.forecasts[currentStepIndex] || city.forecasts[0];
   const mmName = city.mmName || BURMESE_CITIES_MAP[city.name]?.mmName || city.name;
   const region = BURMESE_CITIES_MAP[city.name]?.region || city.state;
+  const stepTimes = city.forecasts.map((f) => f.validUtc);
+  const currentWindow = getStepTimeWindow(stepTimes, currentStepIndex);
 
   const temp = currentF.temperatureC;
   const wind = currentF.windKmh;
@@ -40,7 +43,7 @@ export const CityWeatherPopup3D: React.FC<CityWeatherPopup3DProps> = ({
             </h3>
           </div>
           <p className="mt-0.5 text-xs text-emerald-400">
-            {region} · အမြင့်ပေ {city.elevation}
+            {region} · အမြင့်ပေ {toBurmeseNumber(city.elevation)}
           </p>
           <p className="text-[11px] text-slate-400 font-mono">
             {toBurmeseNumber(city.lat.toFixed(2))}°N, {toBurmeseNumber(city.lon.toFixed(2))}°E
@@ -111,6 +114,7 @@ export const CityWeatherPopup3D: React.FC<CityWeatherPopup3DProps> = ({
         <div className="grid grid-cols-6 gap-1">
           {city.forecasts.map((f, idx) => {
             const isStepActive = idx === currentStepIndex;
+            const win = getStepTimeWindow(stepTimes, idx);
             return (
               <div
                 key={f.leadHours}
@@ -120,7 +124,7 @@ export const CityWeatherPopup3D: React.FC<CityWeatherPopup3DProps> = ({
                     : 'bg-white/5 text-slate-300'
                 }`}
               >
-                <span className="text-[9px] font-mono opacity-80">+{toBurmeseNumber(f.leadHours)}h</span>
+                <span className="text-[8px] font-mono opacity-80 leading-tight">{win?.shortLabel ?? `${f.leadHours}h`}</span>
                 <span className="text-xs font-semibold">{toBurmeseNumber(Math.round(f.temperatureC))}°</span>
                 <span className="text-[8px] font-mono text-teal-300">{toBurmeseNumber(f.windKmh.toFixed(0))}k</span>
               </div>
@@ -131,8 +135,8 @@ export const CityWeatherPopup3D: React.FC<CityWeatherPopup3DProps> = ({
 
       {/* Footer Select Action */}
       <div className="mt-4 flex items-center justify-between border-t border-white/10 pt-3">
-        <span className="text-[11px] text-slate-400">
-          ခန့်မှန်းချက်အဆင့်: +{toBurmeseNumber(currentF.leadHours)} နာရီ
+        <span className="text-[10px] text-slate-400 font-mono">
+          {currentWindow?.label ?? '—'}
         </span>
 
         <button

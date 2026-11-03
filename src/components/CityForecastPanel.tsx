@@ -10,7 +10,8 @@ import {
   getWmoWeatherInfo,
 } from '../services/weatherVariables';
 import { fetchLiveCityForecast } from '../services/weatherApi';
-import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP, formatMyanmarTime } from '../utils/burmese';
+import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from '../utils/burmese';
+import { getStepTimeWindow } from '../utils/forecastTime';
 import {
   MapPin,
   Wind,
@@ -555,11 +556,11 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                         x={cx}
                         y={chartH - 12}
                         textAnchor="middle"
-                        className={`text-[10px] font-mono ${
+                        className={`text-[9px] font-mono ${
                           isCurrent ? 'font-bold fill-emerald-400' : 'fill-slate-400'
                         }`}
                       >
-                        +{toBurmeseNumber(hour)}h
+                        {getStepTimeWindow(dataset.validTimesUtc, i)?.shortLabel ?? `${hour}h`}
                       </text>
 
                       {/* Primary Node (Circle) */}
@@ -615,8 +616,8 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
               </div>
               <div className="rounded-xl border border-white/10 bg-white/5 p-2.5">
                 <span className="text-[10px] text-slate-400 block">ခန့်မှန်းချိန်ကာလ</span>
-                <span className="font-mono text-xs font-bold text-emerald-400 block mt-0.5">
-                  +{toBurmeseNumber(dataset.leadHours[currentStepIndex])} နာရီအဆင့်
+                <span className="font-mono text-[11px] font-bold text-emerald-400 block mt-0.5 leading-snug">
+                  {getStepTimeWindow(dataset.validTimesUtc, currentStepIndex)?.label ?? '—'}
                 </span>
               </div>
             </div>
@@ -655,7 +656,7 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
               <tbody className="divide-y divide-white/5 font-mono">
                 {dataset.leadHours.map((hour, i) => {
                   const isCurrent = i === currentStepIndex;
-                  const stepTimeUtc = selectedCity.forecasts[i]?.validUtc || new Date().toISOString();
+                  const win = getStepTimeWindow(dataset.validTimesUtc, i);
                   const wCode = Math.round(getCityStepMetric(selectedCity, i, 'weather_code'));
                   const wInfo = getWmoWeatherInfo(wCode);
 
@@ -667,11 +668,10 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                         isCurrent ? 'bg-emerald-500/15 text-white font-semibold' : 'text-slate-300'
                       }`}
                     >
-                      <td className="py-2.5 px-3 font-burmese whitespace-nowrap">
+                      <td className="py-2.5 px-3 whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
                           {isCurrent && <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />}
-                          <span>+{toBurmeseNumber(hour)} နာရီ</span>
-                          <span className="text-[10px] text-slate-400 font-mono">({formatMyanmarTime(stepTimeUtc, false)})</span>
+                          <span className="font-mono text-[11px]">{win?.label ?? `+${hour}h`}</span>
                         </div>
                       </td>
 

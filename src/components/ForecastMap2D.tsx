@@ -8,12 +8,6 @@ import {
   sampleGrid,
 } from '../utils/geo';
 import {
-  BAY_OF_BENGAL_COAST,
-  BANGLADESH_BORDER,
-  THAILAND_COASTLINE,
-  REGIONAL_INLAND_BORDERS,
-} from '../data/neighborBorders';
-import {
   WEATHER_CATEGORIES,
   WEATHER_VARIABLES,
   WEATHER_VARIABLES_BY_ID,
@@ -65,11 +59,6 @@ const REGION_LABELS = [
   { name: 'ဘင်္ဂလားပင်လယ်အော်', lon: 92.5, lat: 14.8, type: 'sea' },
   { name: 'ကပ္ပလီပင်လယ်', lon: 95.8, lat: 10.8, type: 'sea' },
   { name: 'မုတ္တမပင်လယ်ကွေ့', lon: 97.2, lat: 16.2, type: 'sea' },
-  { name: 'အိန္ဒိယ', lon: 93.2, lat: 25.5, type: 'country' },
-  { name: 'ဘင်္ဂလားဒေ့ရှ်', lon: 91.5, lat: 23.2, type: 'country' },
-  { name: 'တရုတ်', lon: 99.8, lat: 25.8, type: 'country' },
-  { name: 'လာအို', lon: 101.8, lat: 20.2, type: 'country' },
-  { name: 'ထိုင်း', lon: 99.5, lat: 16.5, type: 'country' },
 ];
 
 export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
@@ -608,67 +597,8 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         ctx.restore();
       }
 
-      // 5. Surrounding Coastlines & Neighbor Borders
-      ctx.save();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.32)';
-      ctx.lineWidth = 1.3;
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-
-      // Bay of Bengal coast
-      if (BAY_OF_BENGAL_COAST.length > 0) {
-        ctx.beginPath();
-        const start = toScreen(BAY_OF_BENGAL_COAST[0][1], BAY_OF_BENGAL_COAST[0][0]);
-        ctx.moveTo(start.x, start.y);
-        for (let i = 1; i < BAY_OF_BENGAL_COAST.length; i++) {
-          const pt = toScreen(BAY_OF_BENGAL_COAST[i][1], BAY_OF_BENGAL_COAST[i][0]);
-          ctx.lineTo(pt.x, pt.y);
-        }
-        ctx.stroke();
-      }
-
-      // Bangladesh border
-      if (BANGLADESH_BORDER.length > 0) {
-        ctx.beginPath();
-        const start = toScreen(BANGLADESH_BORDER[0][1], BANGLADESH_BORDER[0][0]);
-        ctx.moveTo(start.x, start.y);
-        for (let i = 1; i < BANGLADESH_BORDER.length; i++) {
-          const pt = toScreen(BANGLADESH_BORDER[i][1], BANGLADESH_BORDER[i][0]);
-          ctx.lineTo(pt.x, pt.y);
-        }
-        ctx.stroke();
-      }
-
-      // Thailand and Malay peninsula coastline
-      if (THAILAND_COASTLINE.length > 0) {
-        ctx.beginPath();
-        const start = toScreen(THAILAND_COASTLINE[0][1], THAILAND_COASTLINE[0][0]);
-        ctx.moveTo(start.x, start.y);
-        for (let i = 1; i < THAILAND_COASTLINE.length; i++) {
-          const pt = toScreen(THAILAND_COASTLINE[i][1], THAILAND_COASTLINE[i][0]);
-          ctx.lineTo(pt.x, pt.y);
-        }
-        ctx.stroke();
-      }
-
-      // Inland borders
-      REGIONAL_INLAND_BORDERS.forEach((border) => {
-        if (border.length < 2) return;
-        ctx.beginPath();
-        const start = toScreen(border[0][1], border[0][0]);
-        ctx.moveTo(start.x, start.y);
-        for (let i = 1; i < border.length; i++) {
-          const pt = toScreen(border[i][1], border[i][0]);
-          ctx.lineTo(pt.x, pt.y);
-        }
-        ctx.stroke();
-      });
-      ctx.restore();
-
-      // ==========================================================
-      // 6. ACCURATE MYANMAR NATIONAL BOUNDARY (CRISP WHITE + NEON GLOW)
+      // 5. Myanmar national boundary only (no neighbor / coastline overlays)
       // Note: In MYANMAR_BORDER_POINTS, pt[0] is LON, pt[1] is LAT!
-      // ==========================================================
       if (MYANMAR_BORDER_POINTS && MYANMAR_BORDER_POINTS.length > 0) {
         ctx.save();
         ctx.beginPath();
@@ -696,7 +626,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         ctx.restore();
       }
 
-      // 7. Regional Geographic Names (Burmese Typography - Stable & Crisp Legibility)
+      // 6. Regional Geographic Names (Burmese Typography - Stable & Crisp Legibility)
       REGION_LABELS.forEach((place) => {
         const pos = toScreen(place.lat, place.lon);
         if (pos.x < 45 || pos.x > width + 150 || pos.y < 30 || pos.y > height + 50) return;

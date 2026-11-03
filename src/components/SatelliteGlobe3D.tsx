@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CityInfo, ForecastDataset } from '../types/forecast';
 import { MYANMAR_BORDER_POINTS } from '../utils/geo';
 import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from '../utils/burmese';
+import { getStepTimeWindow } from '../utils/forecastTime';
 import { CityWeatherPopup3D } from './CityWeatherPopup3D';
 import { Compass, Cloud, Flame, RotateCw, ZoomIn, ZoomOut, Maximize2, Minimize2 } from 'lucide-react';
 
@@ -42,7 +43,10 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
   const [showRadar, setShowRadar] = useState(true);
   const [showClouds, setShowClouds] = useState(true);
   const [autoRotate, setAutoRotate] = useState(true);
-  const [activePopupCity, setActivePopupCity] = useState<CityInfo | null>(null);
+  /** OrbitControls autoRotateSpeed — lower = slower Earth spin (default slowed from 0.35 → 0.12) */
+  const [rotateSpeed, setRotateSpeed] = useState(0.12);
+  // Auto-show city card on load; stays in sync when the selected city changes
+  const [activePopupCity, setActivePopupCity] = useState<CityInfo | null>(selectedCity);
 
   // Three.js refs that persist across renders
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -62,14 +66,21 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
   // Central Myanmar coordinates
   const MYANMAR_CENTER = { lat: 19.75, lon: 96.1 };
 
-  // Ref to hold current autoRotate setting so loop never halts
+  // Refs so the animation loop / OrbitControls stay in sync without remounting
   const autoRotateRef = useRef(autoRotate);
+  const rotateSpeedRef = useRef(rotateSpeed);
   useEffect(() => {
     autoRotateRef.current = autoRotate;
     if (controlsRef.current) {
       controlsRef.current.autoRotate = autoRotate;
     }
   }, [autoRotate]);
+  useEffect(() => {
+    rotateSpeedRef.current = rotateSpeed;
+    if (controlsRef.current) {
+      controlsRef.current.autoRotateSpeed = rotateSpeed;
+    }
+  }, [rotateSpeed]);
 
   // Keep onSelectCity in ref to avoid re-triggering Three.js setup
   const onSelectCityRef = useRef(onSelectCity);
@@ -122,7 +133,7 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
     controls.minDistance = 2.0;
     controls.maxDistance = 7.5;
     controls.autoRotate = autoRotateRef.current;
-    controls.autoRotateSpeed = 0.35;
+    controls.autoRotateSpeed = rotateSpeedRef.current;
     controls.target.set(0, 0, 0);
     controlsRef.current = controls;
 
@@ -560,6 +571,8 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
       (mesh.material as THREE.MeshBasicMaterial).color.setHex(isSel ? 0x10b981 : 0xffffff);
       (halo.material as THREE.MeshBasicMaterial).color.setHex(isSel ? 0x34d399 : 0x38bdf8);
     });
+    // Auto-open / refresh the weather card for the newly selected city
+    setActivePopupCity(selectedCity);
   }, [selectedCity]);
 
 
@@ -595,15 +608,13 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
     targetCamPosRef.current = cameraRef.current.position.clone().multiplyScalar(1.18);
   };
 
-  const leadHour = dataset.leadHours[currentStepIndex] ?? 0;
-  const currentStepRow = dataset.csvRows[currentStepIndex];
-  const validMyanmarTime = currentStepRow?.validMyanmar || dataset.metadata.final_valid_myanmar || '02 Nov 2026 12:30 MMT';
+  const timeWindow = getStepTimeWindow(dataset.validTimesUtc, currentStepIndex);
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-[#030712] select-none">
       <div ref={mountRef} className="h-full w-full cursor-grab active:cursor-grabbing" />
 
-      {/* Interactive Localized Weather Metrics Popup (Opened only on city click) */}
+      {/* City weather card — opens on start, city change, and pin click */}
       {activePopupCity && (
         <CityWeatherPopup3D
           city={activePopupCity}
@@ -611,7 +622,7 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
           onClose={() => setActivePopupCity(null)}
           onSelectCity={(c) => {
             onSelectCity(c);
-            setActivePopupCity(null);
+            setActivePopupCity(c);
           }}
           isSelectedCity={activePopupCity.name === selectedCity.name}
         />
@@ -622,19 +633,15 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
         <div className="rounded-full border border-white/15 bg-black/75 px-5 py-2 shadow-2xl backdrop-blur-xl">
           <div className="flex items-center gap-2.5">
             <span className="h-2 w-2 rounded-full bg-cyan-400" />
-            <span className="font-display text-base sm:text-lg font-bold tracking-wider text-cyan-400">
-              {validMyanmarTime}
-            </span>
-            <span className="text-white/30">·</span>
-            <span className="font-mono text-xs font-semibold text-white/90">
-              +{toBurmeseNumber(leadHour)} နာရီ
+            <span className="font-mono text-sm sm:text-base font-bold tracking-wide text-cyan-400 whitespace-nowrap">
+              {timeWindow?.label ?? '—'}
             </span>
           </div>
         </div>
       </div>
 
       {/* Clean Single Control Dock in Top-Right (Organized, no overlap) */}
-      <div className="absolute top-20 right-6 z-20 flex items-center gap-2">
+      <div className="absolute top-20 right-6 z-20 flex flex-col items-end gap-2">
         <div className="flex items-center gap-1 rounded-full border border-white/15 bg-black/70 p-1.5 shadow-2xl backdrop-blur-xl">
           {/* Auto Rotate Toggle */}
           <button
@@ -644,9 +651,36 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
             }`}
             title="ကမ္ဘာလုံး လှည့်ခြင်း"
           >
-            <RotateCw className={`h-3.5 w-3.5 ${autoRotate ? 'animate-spin' : ''}`} style={{ animationDuration: '14s' }} />
+            <RotateCw
+              className={`h-3.5 w-3.5 ${autoRotate ? 'animate-spin' : ''}`}
+              style={{ animationDuration: `${Math.max(8, 28 / Math.max(rotateSpeed, 0.05))}s` }}
+            />
             <span className="hidden sm:inline">လှည့်မည်</span>
           </button>
+
+          {/* Earth rotation speed */}
+          <div
+            className={`flex items-center gap-2 rounded-full px-2.5 py-1 ${
+              autoRotate ? 'bg-white/5' : 'opacity-40 pointer-events-none'
+            }`}
+            title="ကမ္ဘာလုံး လှည့်နှုန်း"
+          >
+            <span className="hidden md:inline text-[10px] text-slate-400 whitespace-nowrap">နှေး</span>
+            <input
+              type="range"
+              min={0.04}
+              max={0.45}
+              step={0.01}
+              value={rotateSpeed}
+              onChange={(e) => setRotateSpeed(Number(e.target.value))}
+              className="h-1.5 w-20 sm:w-28 cursor-pointer accent-cyan-400"
+              aria-label="Earth rotation speed"
+            />
+            <span className="hidden md:inline text-[10px] text-slate-400 whitespace-nowrap">မြန်</span>
+            <span className="font-mono text-[10px] text-cyan-300 w-8 text-right tabular-nums">
+              {rotateSpeed.toFixed(2)}
+            </span>
+          </div>
 
           <div className="h-4 w-px bg-white/20" />
 

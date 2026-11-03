@@ -15,8 +15,8 @@ import { TimelineControls } from './components/TimelineControls';
 import { DataIngestModal } from './components/DataIngestModal';
 import { ModelInfoModal } from './components/ModelInfoModal';
 import { CycloneWarningCard } from './components/CycloneWarningCard';
-import { ArchitecturePipelineModal } from './components/ArchitecturePipelineModal';
-import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from './utils/burmese';
+import { BURMESE_STRINGS } from './utils/burmese';
+import { getStepTimeWindow } from './utils/forecastTime';
 import { Layers } from 'lucide-react';
 
 export default function App() {
@@ -50,28 +50,18 @@ export default function App() {
   const [isModelInfoOpen, setIsModelInfoOpen] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
-  // Automated Architecture & Cyclone Storm Alert State
+  // Cyclone HUD — bundled public/storm_alert.json, then overridden by zip upload
   const [stormAlert, setStormAlert] = useState<StormAlert | null>(null);
-  const [isArchitectureOpen, setIsArchitectureOpen] = useState<boolean>(false);
   const [focusCoords, setFocusCoords] = useState<{ lat: number; lon: number } | null>(null);
 
-  const fetchStormAlert = useCallback(async () => {
-    try {
-      const res = await fetch('/api/storm-alert');
-      if (res.ok) {
-        const data: StormAlert = await res.json();
-        setStormAlert(data);
-      }
-    } catch (e) {
-      console.warn('Could not load storm alert from API:', e);
-    }
-  }, []);
-
   useEffect(() => {
-    fetchStormAlert();
-    const interval = setInterval(fetchStormAlert, 15000);
-    return () => clearInterval(interval);
-  }, [fetchStormAlert]);
+    fetch('/api/storm-alert')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: StormAlert | null) => {
+        if (data) setStormAlert(data);
+      })
+      .catch((e) => console.warn('Could not load bundled storm alert:', e));
+  }, []);
 
   // Sync fullscreen change listener
   useEffect(() => {
@@ -114,24 +104,39 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [toggleFullscreen, dataset.leadHours.length]);
 
-  // Automated showcase playback engine
+  // Automated showcase playback: walk every forecast step for the current city,
+  // then advance to the next city and start its steps again (kiosk city tour).
   useEffect(() => {
     if (!isPlaying) return;
 
     const intervalMs = Math.round(2600 / playbackSpeed);
+    const stepCount = dataset.leadHours.length;
+    const cities = dataset.cityForecasts;
 
     const timer = setInterval(() => {
       setCurrentStepIndex((prev) => {
         const next = prev + 1;
-        if (next >= dataset.leadHours.length) {
-          return autoLoop ? 0 : prev;
+        if (next < stepCount) {
+          return next;
         }
-        return next;
+
+        // Finished all prediction windows for this city → next city + restart steps
+        if (cities.length > 0) {
+          setSelectedCity((city) => {
+            const idx = Math.max(
+              0,
+              cities.findIndex((c) => c.name === city.name),
+            );
+            return cities[(idx + 1) % cities.length] ?? city;
+          });
+        }
+
+        return autoLoop || cities.length > 0 ? 0 : prev;
       });
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [isPlaying, playbackSpeed, autoLoop, dataset.leadHours.length]);
+  }, [isPlaying, playbackSpeed, autoLoop, dataset.leadHours.length, dataset.cityForecasts]);
 
   // Global Drag and Drop for zip files
   const [isWindowDragging, setIsWindowDragging] = useState<boolean>(false);
@@ -206,6 +211,9 @@ export default function App() {
     if (newDataset.cityForecasts && newDataset.cityForecasts.length > 0) {
       setSelectedCity(newDataset.cityForecasts[0]);
     }
+    if (newDataset.stormAlert !== undefined) {
+      setStormAlert(newDataset.stormAlert);
+    }
   };
 
   const handleResetDefault = () => {
@@ -213,11 +221,19 @@ export default function App() {
     setDataset(DEFAULT_FORECAST_DATA);
     setCurrentStepIndex(1);
     setSelectedCity(DEFAULT_FORECAST_DATA.cityForecasts[0]);
+    setStormAlert(null);
   };
 
+  const handleSelectCity = useCallback((city: CityInfo) => {
+    setSelectedCity(city);
+    setCurrentStepIndex(0);
+  }, []);
+
   const currentLeadHour = dataset.leadHours[currentStepIndex] ?? 0;
-  const currentStepRow = dataset.csvRows[currentStepIndex];
-  const validMyanmarTime = currentStepRow?.validMyanmar || dataset.metadata.final_valid_myanmar || '02 Nov 2026 12:30 MMT';
+  const currentWindow =
+    getStepTimeWindow(dataset.validTimesUtc, currentStepIndex)?.label ??
+    dataset.csvRows[currentStepIndex]?.validMyanmar ??
+    '—';
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-[#030712] text-white font-burmese select-none">
@@ -228,11 +244,10 @@ export default function App() {
         isFullscreen={isFullscreen}
         onToggleFullscreen={toggleFullscreen}
         onOpenUpload={() => setIsUploadOpen(true)}
-        onOpenArchitecture={() => setIsArchitectureOpen(true)}
         isPlaying={isPlaying}
         onTogglePlay={() => setIsPlaying((p) => !p)}
         leadHour={currentLeadHour}
-        validMyanmarTime={validMyanmarTime}
+        validMyanmarTime={currentWindow}
         stormAlertActive={Boolean(stormAlert?.alert_active)}
       />
 
@@ -253,7 +268,7 @@ export default function App() {
             dataset={dataset}
             currentStepIndex={currentStepIndex}
             selectedCity={selectedCity}
-            onSelectCity={setSelectedCity}
+            onSelectCity={handleSelectCity}
             isKioskPlaying={isPlaying}
           />
         )}
@@ -263,7 +278,7 @@ export default function App() {
             dataset={dataset}
             currentStepIndex={currentStepIndex}
             selectedCity={selectedCity}
-            onSelectCity={setSelectedCity}
+            onSelectCity={handleSelectCity}
             activeLayer={activeLayer}
             onLayerChange={setActiveLayer}
             showWindParticles={showWindParticles}
@@ -278,7 +293,7 @@ export default function App() {
           <CityForecastPanel
             dataset={dataset}
             selectedCity={selectedCity}
-            onSelectCity={setSelectedCity}
+            onSelectCity={handleSelectCity}
             currentStepIndex={currentStepIndex}
             onSelectStepIndex={setCurrentStepIndex}
           />
@@ -344,13 +359,6 @@ export default function App() {
           }}
         />
       )}
-
-      {/* Automated Backend & Cron Architecture Modal */}
-      <ArchitecturePipelineModal
-        isOpen={isArchitectureOpen}
-        onClose={() => setIsArchitectureOpen(false)}
-        onRefreshData={fetchStormAlert}
-      />
 
       {/* Model Specs Modal */}
       <ModelInfoModal

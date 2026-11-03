@@ -1,8 +1,8 @@
 # Local NVIDIA FourCastNet Myanmar AI Weather Showcase
 
-Private office showcase: local-first React + Express UI for **NVIDIA FourCastNet** regional forecasts over Myanmar.
+Private office showcase: **offline-first** React + Express UI for **NVIDIA FourCastNet (FCN)** regional forecasts over Myanmar.
 
-Keep the repo private. Run it offline with the bundled sample, or drop in a Colab/Kaggle forecast `.zip`. No NVIDIA API key is required to run the UI. This is a demonstration build, not a public product release.
+Keep the repo private. Run with the bundled sample, or drop in a Colab/Kaggle forecast `.zip`. **No NVIDIA API key, no Open-Meteo, and no remote weather calls** are required to run the UI. This is a demonstration build, not a public product release.
 
 Deep dive: [`how_this_works.md`](how_this_works.md)
 
@@ -10,9 +10,16 @@ Deep dive: [`how_this_works.md`](how_this_works.md)
 
 | Piece | Source |
 | --- | --- |
-| Temperature + 10 m wind forecasts | **NVIDIA FourCastNet (FCN)** via Earth2Studio, started from **NOAA GFS** |
-| Storm / cyclone HUD | **Not a separate NVIDIA cyclone model** — a post-process rule on FCN wind in the Bay of Bengal (≥ **65 km/h**) written into `storm_alert.json` |
-| Web app | Displays precomputed zip / bundled assets only — **does not call NVIDIA NIM** in this local build |
+| Temperature + 10 m wind | **NVIDIA FourCastNet (`FCN`)** via Earth2Studio, started from **NOAA GFS** — exported as a zip |
+| Storm / cyclone HUD | **Not a separate NVIDIA cyclone model** — a notebook post-process on FCN wind in the Bay of Bengal (≥ **65 km/h**) written into `storm_alert.json` |
+| Web app | Displays **bundled sample** or a dropped **zip only** — **does not** call NVIDIA NIM, Open-Meteo, or invent extra variables |
+
+**Honest variable list.** The zip (and this UI) expose **two** forecast fields only:
+
+1. **2 m temperature** (`t2m` → °C)  
+2. **10 m wind speed** (`u10m` + `v10m` → km/h)
+
+There is no humidity / rain / pressure / cloud product in this showcase. Older UI drafts that listed ~32 parameters or called a live weather API have been removed.
 
 Internal research / software showcase. Local forecast skill has **not** been formally validated here.
 
@@ -23,7 +30,9 @@ Internal research / software showcase. Local forecast skill has **not** been for
 | Node.js **20+** | app server + Vite |
 | npm | uses `package-lock.json` |
 | Modern browser | WebGL for the 3D globe |
-| GPU Colab/Kaggle (optional) | only if you want to **export a new zip** |
+| GPU Colab/Kaggle (optional) | only if you want to **export a new zip** — needs internet + CUDA while generating |
+
+Once you have a zip (or use the bundled sample), the showcase PC can stay **offline**.
 
 ## Quick start
 
@@ -50,18 +59,35 @@ Bundled data under `public/forecast_data/` and `src/data/` loads immediately. Up
 ```text
 Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/
   server.ts                 Express + Vite (serves UI + local storm_alert.json)
-  notebook/                 Colab / Kaggle GPU export notebooks → forecast .zip
+  notebook/                 Colab / Kaggle GPU export → forecast .zip
   public/
     forecast_data/          bundled sample layers, configs, storm_alert.json
-    textures/               globe / map textures
+    textures/               globe / map textures (offline)
   src/
     App.tsx                 views, city tour playback, zip drop
-    components/             globe, 2D radar map, city panel, cyclone card
+    components/             globe, 2D map, city panel, cyclone card
     data/                   defaultForecast + forecastData.json
+    services/               local variable defs only (no remote weather API)
     utils/                  zip / npy parsers, Burmese time windows, geo
+  backend/                  optional automation sketch (not used by npm run dev)
   how_this_works.md
   README.md
 ```
+
+## Offline / zip-first contract
+
+```text
+Bundled sample  ──┐
+                  ├──►  React UI  (temp + wind + optional storm_alert.json)
+Colab FCN zip  ───┘
+```
+
+| Mode | What the UI uses |
+| --- | --- |
+| First load | Bundled `public/forecast_data/` + `src/data/` |
+| After zip drop | **That zip only** for grids, city samples, metadata, and (if present) storm alert |
+
+The browser does **not** call NVIDIA NIM, Open-Meteo, Esri tiles, or any live forecast API. Map basemap uses local textures under `public/textures/`.
 
 ## UI features
 
@@ -69,28 +95,28 @@ Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/
 | --- | --- |
 | Play forecast windows | timeline · `Space` play/pause · `←`/`→` step · `F` fullscreen |
 | Time labels | Burmese digits, e.g. `၃-၁၁-၂၀၂၆ (၀၀:၀၀ မှ ၀၆:၀၀)` (not `+6h`) |
-| Views | 3D globe · 2D Myanmar radar (Myanmar border only) · city trends |
+| Views | 3D globe · 2D Myanmar map · city trends (temp + wind) |
 | City tour | while playing: finish all time windows for a city → next city + popup |
 | City popup | auto-opens on load / city change; shows that city’s step strip |
 | Load forecast | header upload or drag-drop `.zip` |
 | Storm HUD | `storm_alert.json` (`alert_active`) → cyclone card + map marker |
 | Globe spin | slower default + speed slider (နှေး ↔ မြန်) |
 
-## Make a new forecast zip (Colab)
+## Make a new forecast zip (Colab notebook)
 
 Notebook: [`notebook/NVIDIA_Earth2_GPU_Colab_Myanmar.ipynb`](notebook/NVIDIA_Earth2_GPU_Colab_Myanmar.ipynb)
 
-This is the GPU export that the showcase UI is built to load. It does **not** run inside `npm run dev`. Run it on Google Colab (or a CUDA machine), download the zip, then drop that zip on the local UI.
+This is the **zip factory** the showcase is built to load. It does **not** run inside `npm run dev`. Run it on Google Colab (or a CUDA machine with internet), download the zip, then drop that zip on the local UI — including on an offline office PC.
 
-1. Upload the notebook to [Google Colab](https://colab.research.google.com/) and set **Runtime → Change runtime type → GPU**.
+1. Upload the notebook to [Google Colab](https://colab.research.google.com/) and set **Runtime → Change runtime type → GPU** (A100 / ~40 GB class preferred; a free T4 may not fit).
 2. Run **Installation — FCN dependencies only** once. If it fails, read `/content/earth2_fcn_install.log`.
 3. **Restart the session**, then continue from **Imports and GPU check**.
 4. Run the cells through the Gradio dashboard.
-5. On **Run NVIDIA AI forecast**, keep **30 hours** (default). That writes lead times **0, 6, 12, 18, 24, 30** and the timeline stays a row of window buttons. For a longer run, open **Predict future weather** and choose **Next 14 days — 336 hours** (or any length from 6 hours through 14 days). The zip still drops onto the same UI: more than 8 steps switches the player to a slider plus a scrolling strip. A 14-day Colab run is many GPU steps — use a large GPU and expect a longer wait.
+5. On **Run NVIDIA AI forecast**, keep **30 hours** (default). That writes lead times **0, 6, 12, 18, 24, 30** and the timeline stays a row of window buttons. For a longer run, open **Predict future weather** and choose up to **Next 14 days — 336 hours**. More than 8 steps switches the player to a slider plus a scrolling strip.
 6. Download `NVIDIA_FCN_Myanmar_*_Forecast.zip`.
 7. In the local app (`npm run dev` → http://localhost:3000), upload or drag that zip onto the header.
 
-The notebook does the model run. The website only displays the zip.
+The notebook does the model run. The website only displays the zip (or the bundled sample).
 
 | Notebook output | What the UI reads |
 | --- | --- |
@@ -150,10 +176,10 @@ Zip uploads replace the alert **in the browser only** — nothing is written bac
 | Name | Value |
 | --- | --- |
 | Myanmar crop | Lat **9–29°N**, Lon **92–102°E** (~0.25°) |
-| Lead steps | **0, 6, 12, 18, 24, 30** hours (shown as date windows) |
+| Lead steps | **0, 6, 12, 18, 24, 30** hours (shown as date windows); longer zips supported |
 | BoB alert box | Lat **10–22**, Lon **92–96** |
 | Cyclone threshold | **≥ 65 km/h** |
-| Model fields in zip | **2 m temperature**, **10 m wind** |
+| Model fields in zip / UI | **2 m temperature**, **10 m wind** only |
 
 ## References
 
@@ -170,7 +196,7 @@ These are the sources this showcase and the Colab notebook are built from. The l
 | Earth2Studio repository | https://github.com/NVIDIA/earth2studio |
 | NVIDIA Earth-2 | https://www.nvidia.com/en-us/high-performance-computing/earth-2/ |
 
-Installed pin in the notebook: `earth2studio[fcn]==0.20.0`. Inference uses `t2m`, `u10m`, and `v10m` only. The other FCN input channels stay inside the model.
+Installed pin in the notebook: `earth2studio[fcn]==0.20.0`. Inference **exports** `t2m`, `u10m`, and `v10m` only. The other FCN input channels stay inside the model and are **not** shown in the UI.
 
 ### Initial conditions
 

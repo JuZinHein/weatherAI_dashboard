@@ -8,10 +8,8 @@ import {
   sampleGrid,
 } from '../utils/geo';
 import {
-  WEATHER_CATEGORIES,
   WEATHER_VARIABLES,
   WEATHER_VARIABLES_BY_ID,
-  WeatherVariableDef,
 } from '../services/weatherVariables';
 import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from '../utils/burmese';
 import { CityWeatherPopup3D } from './CityWeatherPopup3D';
@@ -22,7 +20,6 @@ import {
   RotateCcw,
   Palette,
   Maximize2,
-  ChevronDown,
   Radio,
 } from 'lucide-react';
 
@@ -76,9 +73,8 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Selected weather variable for the 2D layer
+  // Selected weather variable for the 2D layer (local zip: temp + wind only)
   const [selectedVariableId, setSelectedVariableId] = useState<string>('temperature_2m');
-  const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
 
   // Matplotlib overlay toggle
   const [useMatplotlibOverlay, setUseMatplotlibOverlay] = useState<boolean>(false);
@@ -185,7 +181,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
 
   const currentTempGrid = dataset.temperatureGrid[currentStepIndex] || dataset.temperatureGrid[0];
   const currentWindGrid = dataset.windGrid[currentStepIndex] || dataset.windGrid[0];
-  const currentVarDef: WeatherVariableDef =
+  const currentVarDef =
     WEATHER_VARIABLES_BY_ID[selectedVariableId] || WEATHER_VARIABLES[0];
 
   // Canvas render loop
@@ -300,14 +296,8 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
               pendingTilesRef.current.add(key);
               const img = new Image();
               img.crossOrigin = 'anonymous';
-              img.src = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${ty}/${tx}`;
-              img.onload = () => {
-                tileCacheRef.current.set(key, img);
-                pendingTilesRef.current.delete(key);
-              };
-              img.onerror = () => {
-                pendingTilesRef.current.delete(key);
-              };
+              // Offline mode: do not fetch remote Esri tiles. Local earth texture only.
+              pendingTilesRef.current.delete(key);
             }
           }
         }
@@ -329,11 +319,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
       // ==========================================================
 
       // (A) HEAT & TEMPERATURE ANIMATION (Thermal Radiance + Heat Shimmer Waves)
-      if (
-        selectedVariableId.startsWith('temperature') ||
-        selectedVariableId === 'apparent_temperature' ||
-        selectedVariableId === 'vapour_pressure_deficit'
-      ) {
+      if (selectedVariableId === 'temperature_2m') {
         ctx.save();
         // Central Myanmar Thermal Radiance Bloom (Chauk / Mandalay / Magway high heat zone)
         const heatCenters = [
@@ -390,13 +376,8 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         ctx.restore();
       }
 
-      // (B) PRECIPITATION / RAIN / DOPPLER RADAR ANIMATION
-      else if (
-        selectedVariableId === 'radar_reflectivity' ||
-        selectedVariableId.startsWith('precipitation') ||
-        selectedVariableId === 'rain' ||
-        selectedVariableId === 'showers'
-      ) {
+      // (B) Decorative radar sweep view (visual only — not an FCN zip field)
+      else if (selectedVariableId === 'radar_reflectivity') {
         ctx.save();
         // Radar Sweep Radar Station (Yangon / Naypyitaw Radar)
         const radarCenter = toScreen(18.5, 96.0);
@@ -481,63 +462,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         ctx.restore();
       }
 
-      // (C) CLOUD COVER ANIMATION
-      else if (selectedVariableId.startsWith('cloud_cover')) {
-        ctx.save();
-        // Drifting translucent atmospheric cloud banks
-        const cloudPuffs = [
-          { lat: 22.0, lon: 94.0, size: 140 },
-          { lat: 18.5, lon: 97.0, size: 160 },
-          { lat: 14.0, lon: 95.0, size: 190 },
-          { lat: 25.0, lon: 98.0, size: 120 },
-        ];
-
-        cloudPuffs.forEach((puff, idx) => {
-          const driftLon = puff.lon + Math.sin(pulseTime * 0.4 + idx) * 0.35;
-          const pt = toScreen(puff.lat, driftLon);
-          const r = puff.size * zoom;
-
-          const grad = ctx.createRadialGradient(pt.x, pt.y, 20, pt.x, pt.y, r);
-          grad.addColorStop(0, 'rgba(255, 255, 255, 0.42)');
-          grad.addColorStop(0.5, 'rgba(241, 245, 249, 0.25)');
-          grad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
-
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
-          ctx.fill();
-        });
-        ctx.restore();
-      }
-
-      // (D) ATMOSPHERIC PRESSURE & ISOBARIC CONTOURS
-      else if (selectedVariableId.startsWith('pressure')) {
-        ctx.save();
-        ctx.strokeStyle = 'rgba(147, 197, 253, 0.55)';
-        ctx.lineWidth = 1.4;
-        ctx.font = 'bold 10px monospace';
-        ctx.fillStyle = 'rgba(191, 219, 254, 0.9)';
-
-        // Concentric isobar curves
-        const isobars = [
-          { lat: 16.0, lon: 93.0, r: 80, hPa: 1004 },
-          { lat: 16.0, lon: 93.0, r: 150, hPa: 1008 },
-          { lat: 16.0, lon: 93.0, r: 230, hPa: 1012 },
-          { lat: 16.0, lon: 93.0, r: 310, hPa: 1016 },
-        ];
-
-        isobars.forEach((ib) => {
-          const pt = toScreen(ib.lat, ib.lon);
-          const r = ib.r * zoom;
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.fillText(`${ib.hPa} hPa`, pt.x + r * 0.7, pt.y - r * 0.7);
-        });
-        ctx.restore();
-      }
-
-      // (E) DYNAMIC WIND STREAMLINES (When Wind Layer or Particle Streamlines Active)
+      // (C) DYNAMIC WIND STREAMLINES (When Wind Layer or Particle Streamlines Active)
       if (showWindParticles || selectedVariableId.startsWith('wind') || activeLayer === 'wind') {
         ctx.save();
         ctx.lineWidth = 1.8;
@@ -958,14 +883,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
       const temp = sampleGrid(currentTempGrid, lat, lon);
       const wind = sampleGrid(currentWindGrid, lat, lon);
 
-      let val = temp;
-      if (selectedVariableId.startsWith('wind')) val = wind;
-      else if (selectedVariableId === 'apparent_temperature') val = temp + 1.2;
-      else if (selectedVariableId === 'relative_humidity_2m')
-        val = Math.min(95, Math.max(40, 75 - (temp - 25) * 2));
-      else if (selectedVariableId === 'precipitation_probability') val = wind > 15 ? 70 : 25;
-      else if (selectedVariableId.startsWith('pressure')) val = 1012;
-      else if (selectedVariableId === 'visibility') val = 20;
+      const val = selectedVariableId.startsWith('wind') ? wind : temp;
 
       setProbe({
         x,
@@ -1147,62 +1065,6 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
           <span>Matplotlib Overlays {useMatplotlibOverlay ? 'ဖွင့်' : 'ပိတ်'}</span>
         </button>
 
-        {/* Button 6: 32 Variables Dropdown */}
-        <div className="relative">
-          <button
-            onClick={() => setIsDropdownOpen((v) => !v)}
-            className="flex items-center gap-2 rounded-full border border-white/20 bg-black/75 px-3.5 py-2 text-xs font-semibold text-slate-300 backdrop-blur-xl transition hover:bg-black/90 hover:text-white cursor-pointer"
-          >
-            <span>ညွှန်းကိန်း ၃၂ မျိုး</span>
-            <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
-          </button>
-
-          {isDropdownOpen && (
-            <div className="absolute left-0 top-12 z-50 w-72 max-h-[380px] overflow-y-auto rounded-2xl border border-white/20 bg-black/95 p-2 shadow-2xl backdrop-blur-2xl animate-in fade-in zoom-in-95 duration-150">
-              <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-white/10 mb-1">
-                ရာသီဥတု ညွှန်းကိန်း ရွေးချယ်ရန် (32 Variables)
-              </div>
-
-              {WEATHER_CATEGORIES.map((cat) => {
-                const varsInCat = WEATHER_VARIABLES.filter((v) => v.categoryId === cat.id);
-                return (
-                  <div key={cat.id} className="mb-2">
-                    <div className="px-2 py-1 text-[10px] font-semibold text-emerald-400">
-                      {cat.labelMm}
-                    </div>
-                    <div className="flex flex-col gap-0.5">
-                      {varsInCat.map((v) => {
-                        const isSelected = selectedVariableId === v.id;
-                        return (
-                          <button
-                            key={v.id}
-                            onClick={() => {
-                              setSelectedVariableId(v.id);
-                              if (v.id.startsWith('wind')) onLayerChange('wind');
-                              else onLayerChange('temperature');
-                              setIsDropdownOpen(false);
-                            }}
-                            className={`flex items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-xs transition cursor-pointer ${
-                              isSelected
-                                ? 'bg-white/20 text-white font-bold'
-                                : 'text-slate-300 hover:bg-white/10 hover:text-white'
-                            }`}
-                          >
-                            <div className="flex items-center gap-2">
-                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: v.color }} />
-                              <span>{v.labelMm}</span>
-                            </div>
-                            <span className="text-[10px] font-mono text-slate-400">{v.unit}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
       </div>
 
 

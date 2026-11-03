@@ -104,7 +104,8 @@ export const ArchitecturePipelineModal: React.FC<ArchitecturePipelineModalProps>
     }
   };
 
-  const cronCommand = '30 3,9,15,21 * * * /bin/bash /app/applet/scripts/run_cron.sh >> /var/log/fourcastnet_cron.log 2>&1';
+  const cronCommand =
+    '30 3,9,15,21 * * * /bin/bash /path/to/NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/scripts/run_cron.sh >> /var/log/fourcastnet_cron.log 2>&1';
 
   const copyCronToClipboard = () => {
     navigator.clipboard.writeText(cronCommand);
@@ -459,7 +460,7 @@ BAY_OF_BENGAL_BOUNDS = {"min_lat": 10.0, "max_lat": 22.0, "min_lon": 92.0, "max_
 CYCLONE_THRESHOLD_KMH = 65.0
 
 # Run via cron:
-# 30 3,9,15,21 * * * /usr/bin/python3 /app/applet/backend/fourcastnet_pipeline.py`}</pre>
+# 30 3,9,15,21 * * * /usr/bin/python3 /path/to/NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/backend/fourcastnet_pipeline.py`}</pre>
               </div>
             </div>
           )}

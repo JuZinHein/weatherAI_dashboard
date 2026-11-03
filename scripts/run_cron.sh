@@ -5,7 +5,7 @@
 # Add this script to your crontab to execute every 6 hours aligned with NOAA GFS:
 #
 # Recommended crontab line:
-# 30 3,9,15,21 * * * /bin/bash /app/applet/scripts/run_cron.sh >> /var/log/fourcastnet_cron.log 2>&1
+# 30 3,9,15,21 * * * /bin/bash /path/to/NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/scripts/run_cron.sh >> /var/log/fourcastnet_cron.log 2>&1
 # =============================================================================
 
 set -e

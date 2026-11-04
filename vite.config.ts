@@ -11,5 +11,11 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    server: {
+      watch: {
+        // forecast.zarr is multi-GB; watching it floods Vite with EBUSY and freezes the UI
+        ignored: ['**/forecast.zarr/**', '**/*.zarr/**'],
+      },
+    },
   };
 });

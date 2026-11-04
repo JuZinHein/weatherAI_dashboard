@@ -1,8 +1,13 @@
 # Local NVIDIA FourCastNet Myanmar AI Weather Showcase
 
-Private office showcase: **offline-first** React + Express UI for **NVIDIA FourCastNet (FCN)** regional forecasts over Myanmar.
+Private office showcase: React + Express UI for **NVIDIA / Earth-2** regional forecasts over Myanmar and the Bay of Bengal.
 
-Keep the repo private. Run with the bundled sample, or drop in a Colab/Kaggle forecast `.zip`. **No NVIDIA API key, no Open-Meteo, and no remote weather calls** are required to run the UI. This is a demonstration build, not a public product release.
+Keep the repo private. Two data paths are supported:
+
+1. **Local `forecast.zarr/` folder** (recommended for the satellite-radar MapLibre page) — full global Earth-2 ensemble store on disk  
+2. **Bundled sample / Colab `.zip`** — still used by the 3D globe and city-trends views  
+
+**No NVIDIA API key** is required. This is a demonstration build, not a public product release.
 
 Deep dive: [`how_this_works.md`](how_this_works.md)
 
@@ -10,17 +15,10 @@ Deep dive: [`how_this_works.md`](how_this_works.md)
 
 | Piece | Source |
 | --- | --- |
-| Temperature + 10 m wind | **NVIDIA FourCastNet (`FCN`)** via Earth2Studio (GFS or local zarr IC) — exported as a zip, or the bundled sample |
-| Bundled sample | Local zarr-converted **72 h** rollout (leads `0…72` every 6 h) under `src/data/forecastData.json` + `public/forecast_data/layers/` |
-| Storm / cyclone JSON | Notebook can still write `storm_alert.json` (BoB wind ≥ **65 km/h**). The **current UI does not show** a cyclone card — temp + wind only |
-| Web app | Displays **bundled sample** or a dropped **zip only** — **does not** call NVIDIA NIM, Open-Meteo, or invent extra variables |
-
-**Honest variable list.** The zip (and this UI) expose **two** forecast fields only:
-
-1. **2 m temperature** (`t2m` → °C)  
-2. **10 m wind speed** (`u10m` + `v10m` → km/h)
-
-There is no humidity / rain / pressure / cloud product in this showcase. Older UI drafts that listed ~32 parameters or called a live weather API have been removed.
+| Satellite-radar map (default) | **MapLibre** + Esri World Imagery tiles + heat overlay from local **`forecast.zarr`** via Python field API |
+| Zarr variables on that map | `t2m`, `t500`, `msl`, `q850`, `tcwv`, `u10m`, `v10m`, `wind10m` (derived), `u100m`, `v100m`, `z500` |
+| Globe + city trends | Bundled `src/data/forecastData.json` or a dropped Colab FCN zip — **2 m temperature** + **10 m wind** only |
+| Storm / cyclone JSON | Notebook can write `storm_alert.json`; **UI does not show** a cyclone card |
 
 Internal research / software showcase. Local forecast skill has **not** been formally validated here.
 
@@ -30,15 +28,19 @@ Internal research / software showcase. Local forecast skill has **not** been for
 | --- | --- |
 | Node.js **20+** | app server + Vite |
 | npm | uses `package-lock.json` |
-| Modern browser | WebGL for the 3D globe |
-| GPU Colab/Kaggle (optional) | only if you want to **export a new zip** — needs internet + CUDA while generating |
-
-Once you have a zip (or use the bundled sample), the showcase PC can stay **offline**.
+| Python **3.10+** | `zarr`, `numpy`, `fastapi`, `uvicorn` for the field API |
+| `forecast.zarr/` | copy the global Earth-2 store into the **project root** (gitignored — do not commit) |
+| Modern browser | WebGL / MapLibre |
+| Network | **satellite-radar** page needs internet for Esri basemap tiles; heat data stays local |
+| GPU Colab/Kaggle (optional) | only to **export a new Colab zip** for globe / city views |
 
 ## Quick start
 
 ```bash
 cd Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase
+
+# 1. Put the Earth-2 store here (already copied if you followed the office setup):
+#    ./forecast.zarr/
 
 npm install
 npm run dev
@@ -46,13 +48,21 @@ npm run dev
 
 Open **http://localhost:5180**
 
-This **Local_** repo uses port **5180** on purpose so it does not collide with the normal (non-local) showcase on **http://localhost:3000**.
+`npm run dev` starts Express + Vite on **5180** and spawns (or reuses) the zarr field API on **8766**. Proxy path: `/api/zarr/*`.
 
-Bundled data under `public/forecast_data/` and `src/data/` loads immediately. Upload a newer zip any time.
+If the map says the zarr API is unavailable:
+
+```bash
+npm run zarr-api
+# → http://127.0.0.1:8766
+```
+
+This **Local_** repo uses port **5180** so it does not collide with the normal (non-local) showcase on **http://localhost:3000**.
 
 | Script | What |
 | --- | --- |
-| `npm run dev` | Express + Vite on port **5180** (`PORT=xxxx` to override) |
+| `npm run dev` | Express + Vite on **5180** + auto-start zarr API on **8766** |
+| `npm run zarr-api` | Python field server only (`backend/zarr_field_server.py`) |
 | `npm run build` | production build → `dist/` |
 | `npm start` | same entry as `dev` (`tsx server.ts`) |
 | `npm run lint` | `tsc --noEmit` |
@@ -61,164 +71,153 @@ Bundled data under `public/forecast_data/` and `src/data/` loads immediately. Up
 
 ```text
 Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/
-  server.ts                 Express + Vite on port 5180
+  forecast.zarr/            local Earth-2 global store (gitignored, multi-GB)
+  server.ts                 Express + Vite; proxies /api/zarr → :8766
+  backend/
+    zarr_field_server.py    FastAPI meta + field crops from forecast.zarr
+    fourcastnet_pipeline.py optional automation sketch
   notebook/                 Colab / Kaggle GPU export → forecast .zip
   public/
-    forecast_data/          bundled layer PNGs, configs, optional storm_alert.json
-    textures/               globe / map textures (offline)
+    forecast_data/          bundled layers, sea-borders.json, configs
+    textures/               globe textures (offline)
   src/
-    App.tsx                 views, city tour playback, zip drop
-    components/             globe, 2D map, city panel, timeline
-    data/                   defaultForecast + forecastData.json (72 h grids)
-    services/               local variable defs only (no remote weather API)
-    utils/                  zip / npy parsers, Burmese time windows, geo
-  backend/                  optional automation sketch (not used by npm run dev)
+    App.tsx                 views, playback, zip drop
+    components/
+      ForecastMap2D.tsx     MapLibre satellite-radar page
+      SatelliteGlobe3D.tsx  3D globe
+      CityForecastPanel.tsx city trends
+      TimelineControls.tsx  0.5x … 10x scrubber
+    services/
+      zarrApi.ts            client for /api/zarr/meta + /api/zarr/field
+      weatherVariables.ts   Colab zip fields (temp + wind)
+    data/                   defaultForecast + forecastData.json
   how_this_works.md
   README.md
 ```
 
-## Offline / zip-first contract
+## Data flow
 
 ```text
-Bundled sample  ──┐
-                  ├──►  React UI  (2 m temperature + 10 m wind only)
-Colab FCN zip  ───┘
+forecast.zarr/  ──►  Python :8766  ──►  /api/zarr/*  ──►  MapLibre heat map
+                                                              (all variables)
+
+Bundled JSON / Colab zip  ──►  React (globe + city trends: temp + wind)
 ```
 
 | Mode | What the UI uses |
 | --- | --- |
-| First load | Bundled `src/data/forecastData.json` + `public/forecast_data/` (always — older IndexedDB uploads are skipped) |
-| After zip drop | **That zip only** for grids, city samples, and metadata |
-
-The browser does **not** call NVIDIA NIM, Open-Meteo, Esri tiles, or any live forecast API. Map basemap uses local textures under `public/textures/`.
+| Satellite-radar (default) | Local `forecast.zarr` via field API — cropped heat JPEG on MapLibre |
+| Globe / city trends | Bundled `forecastData.json` or uploaded Colab zip |
+| After Colab zip drop | Updates globe/city grids; MapLibre page still prefers the zarr store when present |
 
 ## UI features
 
 | Action | How |
 | --- | --- |
-| Default view | **2D Myanmar map** (`satellite_radar`); switch to 3D globe or city trends in the header |
-| Play forecast windows | timeline · `Space` play/pause · `←`/`→` step · `F` fullscreen |
-| Time labels | Burmese digits, e.g. `၃-၁၁-၂၀၂၆ (၀၀:၀၀ မှ ၀၆:၀၀)` (not `+6h`) |
-| 2D map | Myanmar border + smooth temp / wind heat overlays (toggle layers independently) |
-| City tour | while playing: finish all time windows for a city → next city + popup |
-| City popup | auto-opens on load / city change; shows that city’s step strip |
-| Load forecast | header upload or drag-drop `.zip` |
-| Globe spin | slower default + speed slider (နှေး ↔ မြန်) |
-| Storm HUD | **not wired** in this build (zip may still contain `storm_alert.json`) |
+| Default view | **မြန်မာ့ဒေသတွင်း ဂြိုဟ်တုရေဒါ** (MapLibre) |
+| MapLibre layers | All zarr variables + derived `wind10m`; Burmese chips |
+| Heat overlay | Fixed SE Asia / BoB crop — stays visible while zooming and playing |
+| Zoom | Min ~**4.15**, max **10**; pan limited to the storm-basin box |
+| City pins | MapLibre dots + labels; click to select (no auto city-tour on this page) |
+| Playback | Timeline · `Space` · `←`/`→` · speeds **0.5x … 10x** · `F` fullscreen |
+| Time labels | Burmese windows, e.g. `၃-၁၁-၂၀၂၆ (၀၀:၀၀ မှ ၀၆:၀၀)` |
+| City tour | Globe / city-trends only — radar page keeps the selected city fixed |
+| Load Colab zip | Header upload or drag-drop (globe / city data) |
+| Storm HUD | **not wired** |
 
-## Make a new forecast zip (Colab notebook)
+## Local `forecast.zarr`
+
+1. Copy the Earth-2 store so the project root contains `forecast.zarr/` (with `t2m/`, `lat/`, `lon/`, `lead_time/`, …).  
+2. Do **not** commit it — listed in `.gitignore`.  
+3. Typical shape: ensemble × time × lead × lat × lon (global 0.25°).  
+4. The field API serves **viewport/region crops** as JSON; the browser never loads the whole multi-GB store.
+
+Health check: `http://127.0.0.1:8766/api/health`
+
+## Make a new Colab forecast zip (globe / city)
 
 Notebook: [`notebook/NVIDIA_Earth2_GPU_Colab_Myanmar.ipynb`](notebook/NVIDIA_Earth2_GPU_Colab_Myanmar.ipynb)
 
-This is the **zip factory** the showcase is built to load. It does **not** run inside `npm run dev`. Run it on Google Colab (or a CUDA machine with internet), download the zip, then drop that zip on the local UI — including on an offline office PC.
+This zip path still feeds the **globe** and **city-trends** views (temp + wind). It does **not** replace `forecast.zarr` for MapLibre.
 
-1. Upload the notebook to [Google Colab](https://colab.research.google.com/) and set **Runtime → Change runtime type → GPU** (A100 / ~40 GB class preferred; a free T4 may not fit).
-2. Run **Installation — FCN dependencies only** once. If it fails, read `/content/earth2_fcn_install.log`.
-3. **Restart the session**, then continue from **Imports and GPU check**.
-4. Run the cells through the Gradio dashboard.
-5. On **Run NVIDIA AI forecast**, keep **30 hours** (default). That writes lead times **0, 6, 12, 18, 24, 30** and the timeline stays a row of window buttons. For a longer run, open **Predict future weather** and choose up to **Next 14 days — 336 hours**. More than 8 steps switches the player to a slider plus a scrolling strip.
-6. Download `NVIDIA_FCN_Myanmar_*_Forecast.zip`.
-7. In the local app (`npm run dev` → http://localhost:5180), upload or drag that zip onto the header.
+1. Upload to [Google Colab](https://colab.research.google.com/) → **GPU** runtime.  
+2. Run install → restart → imports → Gradio forecast.  
+3. Download `NVIDIA_FCN_Myanmar_*_Forecast.zip`.  
+4. Drop it on the local UI header at http://localhost:5180.
 
-The notebook does the model run. The website only displays the zip (or the bundled sample).
-
-| Notebook output | What the UI reads |
+| Notebook output | Globe / city UI |
 | --- | --- |
 | `t2m` → `temperature_c` (°C) | temperature maps, city °C |
 | `u10m` + `v10m` → `wind_kmh` | wind maps, city km/h |
-| Lat **29°N → 9°N**, Lon **92°E → 102°E**, step **0.25°** (81 × 41) | `sampleGrid` in `src/utils/geo.ts` (row 0 is north) |
-| 12 cities below | `src/data/forecastData.json` + `src/utils/burmese.ts` |
-| BoB scan Lat **10–22**, Lon **92–96**, peak **≥ 65 km/h** | optional `storm_alert.json` in the zip (parsed, **not shown** in UI yet) |
-| `regional_forecast.npz`, `metadata.json`, `storm_alert.json`, `all_steps_with_future_flags.csv`, PNGs | `src/utils/zipForecastParser.ts` |
+| Lat **29°N → 9°N**, Lon **92°E → 102°E**, 0.25° | `sampleGrid` in `src/utils/geo.ts` |
+| 12 cities | `src/data/forecastData.json` + `src/utils/burmese.ts` |
 
-City ping points (lat, lon), same in the notebook `CITIES` dict and the UI:
+MapLibre city pins (15 state/region capitals) — coords in `src/data/myanmarCities.ts`; °C sampled from `forecast.zarr` `t2m`:
 
-| City | Lat | Lon |
-| --- | --- | --- |
-| Yangon | 16.8661 | 96.1951 |
-| Mandalay | 21.9750 | 96.0833 |
-| Nay Pyi Taw | 19.7633 | 96.0785 |
-| Taunggyi | 20.7833 | 97.0333 |
-| Mawlamyine | 16.4905 | 97.6283 |
-| Bago | 17.3221 | 96.4660 |
-| Pathein | 16.7797 | 94.7324 |
-| Sittwe | 20.1462 | 92.8983 |
-| Monywa | 22.1086 | 95.1378 |
-| Myitkyina | 25.3833 | 97.4000 |
-| Dawei | 14.0833 | 98.2000 |
-| Pyin Oo Lwin | 22.0333 | 96.4667 |
-
-The zip’s CSV is the city you picked in Colab. After upload, the UI **re-samples all 12 cities** from the temperature and wind grids at these coordinates, so every city on the globe updates from that run.
-
-If a zip has **no** `storm_alert.json`, nothing storm-related is shown (the UI does not render alerts anyway). The browser does not invent an alert from the wind grid.
+| # | State / Region | City | Lat | Lon |
+| --- | --- | --- | --- | --- |
+| 1 | Yangon Region | Yangon | 16.8053 | 96.1561 |
+| 2 | Mandalay Region | Mandalay | 21.9747 | 96.0836 |
+| 3 | Sagaing Region | Sagaing | 21.8822 | 95.9786 |
+| 4 | Magway Region | Magway | 20.1500 | 94.9500 |
+| 5 | Bago Region | Bago | 17.3433 | 96.4981 |
+| 6 | Ayeyarwady Region | Pathein | 16.7667 | 94.7333 |
+| 7 | Tanintharyi Region | Dawei | 14.0800 | 98.1900 |
+| 8 | Kachin State | Myitkyina | 25.3867 | 97.3936 |
+| 9 | Shan State | Taunggyi | 20.7806 | 97.0372 |
+| 10 | Chin State | Hakha | 22.6510 | 93.6166 |
+| 11 | Kayah State | Loikaw | 19.6830 | 97.2170 |
+| 12 | Kayin State | Hpa-An | 16.8906 | 97.6333 |
+| 13 | Mon State | Mawlamyine | 16.4847 | 97.6258 |
+| 14 | Rakhine State | Sittwe | 20.1444 | 92.8969 |
+| 15 | Naypyidaw Territory | Naypyidaw | 19.7475 | 96.1150 |
 
 ## Storm alert (honest summary)
 
-The Colab notebook can still scan FCN 10 m wind in a Bay of Bengal box and write `storm_alert.json` when the peak is **≥ 65 km/h**. That file may travel inside the zip and is parsed by `zipForecastParser.ts`, but **this UI build does not render a cyclone card or map marker**.
-
-- **Wind values** = NVIDIA FourCastNet (`u10m`, `v10m` → km/h)  
-- **Alert on/off** = a notebook rule on those winds — not NVIDIA StormScope and not a DMH bulletin  
-- **Express server** does **not** expose `/api/storm-alert`; there is no storm fetch on startup  
-
-The **65 km/h** floor is the code’s round number for the North Indian Ocean **cyclonic storm** class, which starts at **34 knots (62–88 km/h)** in the IMD / WMO–ESCAP Panel tables. Myanmar’s national row in that same plan uses the same 34-knot floor. This app does not track a cyclone eye or issue an official warning.
+The Colab notebook can still write `storm_alert.json` (BoB peak wind ≥ **65 km/h**). The zip parser may keep it; **this UI does not render a cyclone card**. Express does **not** expose `/api/storm-alert`.
 
 ## Bounds
 
 | Name | Value |
 | --- | --- |
-| Myanmar crop | Lat **9–29°N**, Lon **92–102°E** (~0.25°) |
-| Bundled lead steps | **0 … 72** hours every 6 h (13 steps); longer Colab zips (up to 14 days) supported |
-| BoB alert box (notebook) | Lat **10–22**, Lon **92–96** |
-| Cyclone threshold (notebook) | **≥ 65 km/h** |
-| Model fields in zip / UI | **2 m temperature**, **10 m wind** only |
+| MapLibre default frame | ~Lon **78–112°E**, Lat **2–28.5°N** (SE Asia + BoB + Andaman) |
+| MapLibre max zoom-out | minZoom **~4.15**, hard maxBounds around that basin |
+| Heat crop (API) | ~Lon **74–116°E**, Lat **0.5–30.5°N** (fixed so play/zoom keep the overlay) |
+| Bundled Colab crop | Lat **9–29°N**, Lon **92–102°E** |
+| Zarr leads | typically **0 … 168** h every 6 h (29 steps) when using `forecast.zarr` |
+| Model fields (MapLibre) | full Earth-2 variable set listed above |
+| Model fields (globe / city zip) | **2 m temperature**, **10 m wind** only |
 
 ## References
-
-These are the sources this showcase and the Colab notebook are built from. The local UI does not call them at runtime.
 
 ### Model and article
 
 | What we run | Link |
 | --- | --- |
-| **FourCastNet** paper (Pathak et al., 2022) — AFNO global model, 0.25°, 6-hour steps | https://arxiv.org/abs/2202.11214 |
-| Earth2Studio `FCN` class (the weights this notebook loads, not FourCastNet 3) | https://github.com/NVIDIA/earth2studio/blob/main/earth2studio/models/px/fcn.py |
-| Prognostic model list (`FCN`, and `StormScope*` further down) | https://nvidia.github.io/earth2studio/main/modules/models_px/ |
+| **FourCastNet** paper (Pathak et al., 2022) | https://arxiv.org/abs/2202.11214 |
+| Earth2Studio `FCN` class | https://github.com/NVIDIA/earth2studio/blob/main/earth2studio/models/px/fcn.py |
 | Earth2Studio docs | https://nvidia.github.io/earth2studio/main/ |
-| Earth2Studio repository | https://github.com/NVIDIA/earth2studio |
 | NVIDIA Earth-2 | https://www.nvidia.com/en-us/high-performance-computing/earth-2/ |
+| MapLibre GL JS | https://maplibre.org/ |
 
-Installed pin in the notebook: `earth2studio[fcn]==0.20.0`. Inference **exports** `t2m`, `u10m`, and `v10m` only. The other FCN input channels stay inside the model and are **not** shown in the UI.
+Installed pin in the Colab notebook: `earth2studio[fcn]==0.20.0`.
 
 ### Initial conditions
 
 | What | Link |
 | --- | --- |
-| NOAA GFS on AWS (`noaa-gfs-bdp-pds`, 0.25° `pgrb2`) | https://registry.opendata.aws/noaa-gfs-bdp-pds/ |
-| GFS product description | https://www.ncei.noaa.gov/products/weather-climate-models/global-forecast |
-| Example object the notebook checks | `https://noaa-gfs-bdp-pds.s3.amazonaws.com/gfs.{YYYYMMDD}/{HH}/atmos/gfs.t{HH}z.pgrb2.0p25.f000` |
+| NOAA GFS on AWS (`noaa-gfs-bdp-pds`) | https://registry.opendata.aws/noaa-gfs-bdp-pds/ |
 
 ### Storm scan vs StormScope
 
-**In this project.** After FCN finishes, the notebook scans 10 m wind on Lat **10–22°N**, Lon **92–96°E** (Bay of Bengal, west of the Myanmar coast). If the peak is **≥ 65 km/h**, it writes `storm_alert.json`. The zip parser can read that file; the **current UI does not display** a cyclone card.
-
-**Why StormScope is out of scope.** [StormScope](https://nvidia.github.io/earth2studio/main/examples/04_nowcasting/03_stormscope_goes_example/) is a different Earth2Studio family (`StormScopeGOES` / `StormScopeMRMS`). It does short-range **satellite and radar nowcasting**, not the same job as this showcase.
-
-| | This showcase (FourCastNet) | StormScope |
-| --- | --- | --- |
-| Job | Medium-range **weather rollout** from GFS (hours → ~day) | Minutes-scale **nowcast** of satellite / radar fields |
-| Inputs | NOAA **GFS** initial state | **GOES** imagery + **MRMS** radar (and related conditioning) |
-| Extra packages | `earth2studio[fcn]` only | Needs StormScope stacks such as **Earth2Grid** / **NATTEN** |
-| Geography in examples | Myanmar crop + Bay of Bengal wind box | Official example is CONUS-style GOES/MRMS nowcasting |
-| Optional `storm_alert.json` | Notebook BoB wind threshold → JSON (UI unused) | Not used |
-
-So StormScope is out of scope on purpose: this repo is a **zip-first FourCastNet Myanmar temperature/wind demo**. Pulling StormScope in would mean a second model, different data pipelines, heavier installs, and a different product (nowcasting). The notebook install cell explicitly skips StormScope extras so a failed StormScope environment does not break the FCN run.
+Notebook BoB wind threshold → optional `storm_alert.json` (UI unused). [StormScope](https://nvidia.github.io/earth2studio/main/examples/04_nowcasting/03_stormscope_goes_example/) is a different nowcasting product and is **out of scope**.
 
 | Threshold source | What it says |
 | --- | --- |
-| [IMD terminology (RSMC New Delhi)](https://rsmcnewdelhi.imd.gov.in/images/pdf/terminology.pdf) | Cyclonic storm: **34–47 knots (62–88 km/h)** |
-| [WMO/ESCAP Panel TCP-21 (2021)](https://mausam.imd.gov.in/ptc/TCP/TCP2021.pdf) | Same 34-knot floor; **Myanmar** national table matches it |
-| [DMH Myanmar](https://www.moezala.gov.mm/) | National meteorological service. This repo does not scrape or replace DMH warnings |
+| [IMD terminology](https://rsmcnewdelhi.imd.gov.in/images/pdf/terminology.pdf) | Cyclonic storm: **34–47 knots (62–88 km/h)** |
+| [WMO/ESCAP Panel TCP-21 (2021)](https://mausam.imd.gov.in/ptc/TCP/TCP2021.pdf) | Same 34-knot floor; Myanmar national table matches |
+| [DMH Myanmar](https://www.moezala.gov.mm/) | National service — this repo does not replace DMH warnings |
 
 ### Attribution
 
-Private office showcase code. FourCastNet, Earth2Studio, GFS, and the IMD/WMO documents stay under their own upstream licenses and terms. Keep those credits when presenting this work.
+Private office showcase code. FourCastNet, Earth2Studio, GFS, Esri tiles, and IMD/WMO documents stay under their own upstream licenses and terms.

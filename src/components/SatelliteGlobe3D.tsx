@@ -40,7 +40,8 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
   const mountRef = useRef<HTMLDivElement>(null);
 
   // Pure Daytime Satellite High-Resolution Globe
-  const [showRadar, setShowRadar] = useState(true);
+  /** Weather radar overlay — off until the user toggles မိုးလေဝသ ရေဒါ */
+  const [showRadar, setShowRadar] = useState(false);
   const [showClouds, setShowClouds] = useState(true);
   const [autoRotate, setAutoRotate] = useState(true);
   /** OrbitControls autoRotateSpeed — lower = slower Earth spin (default slowed from 0.35 → 0.12) */
@@ -105,10 +106,11 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
     const camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 1000);
     cameraRef.current = camera;
 
-    // DIRECTLY CENTER MYANMAR IN THE CAMERA:
+    // Start far enough to see the full globe; Myanmar-facing so “Focus မြန်မာ” is a zoom-in
     const myanmarCenterVec = latLonToSphere(MYANMAR_CENTER.lat, MYANMAR_CENTER.lon, 1.8);
     const cameraDir = myanmarCenterVec.clone().normalize();
-    const initialCamDist = 3.35;
+    // Earth radius ≈ 1.8; FOV 36° needs ~6× to fit the full disc with a little margin
+    const initialCamDist = 6.0;
     camera.position.copy(cameraDir.clone().multiplyScalar(initialCamDist));
     camera.lookAt(0, 0, 0);
 
@@ -131,7 +133,7 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
     controls.enableDamping = true;
     controls.dampingFactor = 0.055;
     controls.minDistance = 2.0;
-    controls.maxDistance = 7.5;
+    controls.maxDistance = 9.0;
     controls.autoRotate = autoRotateRef.current;
     controls.autoRotateSpeed = rotateSpeedRef.current;
     controls.target.set(0, 0, 0);
@@ -242,6 +244,7 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
       blending: THREE.NormalBlending,
     });
     const rMesh = new THREE.Mesh(rGeo, rMat);
+    rMesh.visible = false; // matches showRadar default (off until toggled)
     radarMeshRef.current = rMesh;
     scene.add(rMesh);
 

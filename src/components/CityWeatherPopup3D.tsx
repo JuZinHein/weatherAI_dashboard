@@ -2,22 +2,21 @@ import React from 'react';
 import { CityInfo } from '../types/forecast';
 import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from '../utils/burmese';
 import { getStepTimeWindow } from '../utils/forecastTime';
-import { X, Thermometer, Wind, Gauge, Droplets, Navigation, Check } from 'lucide-react';
+import { X, Thermometer, Wind } from 'lucide-react';
 
 interface CityWeatherPopup3DProps {
   city: CityInfo;
   currentStepIndex: number;
   onClose: () => void;
-  onSelectCity: (city: CityInfo) => void;
-  isSelectedCity: boolean;
+  /** Kept for call-site compatibility; city is already selected when the popup opens */
+  onSelectCity?: (city: CityInfo) => void;
+  isSelectedCity?: boolean;
 }
 
 export const CityWeatherPopup3D: React.FC<CityWeatherPopup3DProps> = ({
   city,
   currentStepIndex,
   onClose,
-  onSelectCity,
-  isSelectedCity,
 }) => {
   const currentF = city.forecasts[currentStepIndex] || city.forecasts[0];
   const mmName = city.mmName || BURMESE_CITIES_MAP[city.name]?.mmName || city.name;
@@ -118,43 +117,37 @@ export const CityWeatherPopup3D: React.FC<CityWeatherPopup3DProps> = ({
             return (
               <div
                 key={`${f.leadHours}-${idx}`}
-                className={`flex flex-col items-center justify-center rounded-lg p-1 text-center transition ${
-                  city.forecasts.length > 8 ? 'min-w-[3.4rem] shrink-0' : ''
+                className={`flex flex-col items-center justify-center rounded-lg px-1 py-1.5 text-center transition ${
+                  city.forecasts.length > 8 ? 'min-w-[3.6rem] shrink-0' : ''
                 } ${
                   isStepActive
                     ? 'bg-emerald-600 text-white font-bold ring-1 ring-emerald-400'
                     : 'bg-white/5 text-slate-300'
                 }`}
               >
-                <span className="text-[8px] font-mono opacity-80 leading-tight">{win?.shortLabel ?? `${f.leadHours}h`}</span>
-                <span className="text-xs font-semibold">{toBurmeseNumber(Math.round(f.temperatureC))}°</span>
-                <span className="text-[8px] font-mono text-teal-300">{toBurmeseNumber(f.windKmh.toFixed(0))}k</span>
+                <span className="text-[8px] font-mono opacity-80 leading-tight">
+                  {win?.dateLabel ?? '—'}
+                </span>
+                <span className="text-[8px] font-mono opacity-90 leading-tight">
+                  {win?.shortLabel ?? `${f.leadHours}h`}
+                </span>
+                <span className="text-xs font-semibold mt-0.5">
+                  {toBurmeseNumber(Math.round(f.temperatureC))}°
+                </span>
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Footer Select Action */}
-      <div className="mt-4 flex items-center justify-between border-t border-white/10 pt-3">
-        <span className="text-[10px] text-slate-400 font-mono">
-          {currentWindow?.label ?? '—'}
-        </span>
-
-        <button
-          onClick={() => {
-            onSelectCity(city);
-          }}
-          disabled={isSelectedCity}
-          className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
-            isSelectedCity
-              ? 'bg-white/10 text-emerald-400 cursor-default'
-              : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-md'
-          }`}
-        >
-          {isSelectedCity ? <Check className="h-3.5 w-3.5" /> : <Navigation className="h-3.5 w-3.5" />}
-          <span>{isSelectedCity ? 'ရွေးချယ်ထားပြီး' : 'ပင်မမြို့အဖြစ် သတ်မှတ်ရန်'}</span>
-        </button>
+      {/* Valid date + time for the active step */}
+      <div className="mt-4 border-t border-white/10 pt-3">
+        <div className="text-[10px] text-slate-400">ခန့်မှန်းချက် အချိန်</div>
+        <div className="mt-0.5 font-mono text-xs font-semibold text-emerald-300">
+          {currentWindow
+            ? `${currentWindow.dateLabel} · ${currentWindow.shortLabel}`
+            : '—'}
+        </div>
       </div>
     </div>
   );

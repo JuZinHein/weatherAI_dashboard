@@ -146,7 +146,7 @@ export const TimelineControls: React.FC<TimelineControlsProps> = ({
 
             {/* Speed */}
             <div className="ml-1 flex items-center rounded-full border border-white/15 bg-white/5 p-0.5 text-xs font-mono">
-              {[0.5, 1, 2].map((s) => (
+              {[0.5, 1, 2, 5, 10].map((s) => (
                 <button
                   key={s}
                   onClick={() => onChangeSpeed(s)}

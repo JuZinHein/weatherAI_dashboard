@@ -7,3 +7,8 @@ coverage/
 .env*
 !.env.example
 .aistudio/
+
+# Large Earth-2 global store (keep local only; do not commit)
+forecast.zarr/
+*.zarr.zip
+/data/uploaded_zarr/

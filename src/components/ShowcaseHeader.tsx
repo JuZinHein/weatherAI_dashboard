@@ -1,14 +1,13 @@
 import React from 'react';
 import { ViewMode } from '../types/forecast';
 import { BURMESE_STRINGS } from '../utils/burmese';
-import { Maximize2, Minimize2, Upload, Play, Pause, Globe, Map, BarChart3, Cpu, Clock } from 'lucide-react';
+import { Maximize2, Minimize2, Play, Pause, Globe, Map, BarChart3, Cpu, Clock } from 'lucide-react';
 
 interface ShowcaseHeaderProps {
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
-  onOpenUpload: () => void;
   isPlaying: boolean;
   onTogglePlay: () => void;
   leadHour?: number;
@@ -20,7 +19,6 @@ export const ShowcaseHeader: React.FC<ShowcaseHeaderProps> = ({
   onViewModeChange,
   isFullscreen,
   onToggleFullscreen,
-  onOpenUpload,
   isPlaying,
   onTogglePlay,
   validMyanmarTime,
@@ -90,15 +88,6 @@ export const ShowcaseHeader: React.FC<ShowcaseHeaderProps> = ({
           >
             {isPlaying ? <Pause className="h-3.5 w-3.5 text-amber-400" /> : <Play className="h-3.5 w-3.5 text-emerald-400" />}
             <span className="hidden xl:inline">{isPlaying ? BURMESE_STRINGS.pauseLoop : BURMESE_STRINGS.autoPlay}</span>
-          </button>
-
-          <button
-            onClick={onOpenUpload}
-            className="flex items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-2.5 sm:px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-white/15 hover:text-white"
-            title={BURMESE_STRINGS.uploadZip}
-          >
-            <Upload className="h-3.5 w-3.5 text-sky-400" />
-            <span className="hidden xl:inline">{BURMESE_STRINGS.uploadZip}</span>
           </button>
 
           <button

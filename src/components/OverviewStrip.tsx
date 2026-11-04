@@ -16,7 +16,11 @@ export const OverviewStrip: React.FC<OverviewStripProps> = ({
   currentStepIndex,
   onSelectStepIndex,
 }) => {
-  const currentStep = selectedCity.forecasts[currentStepIndex] || selectedCity.forecasts[0];
+  const currentStep =
+    selectedCity.forecasts?.[currentStepIndex] || selectedCity.forecasts?.[0] || null;
+  if (!currentStep) {
+    return null;
+  }
   const temp = currentStep.temperatureC;
   const wind = currentStep.windKmh;
 

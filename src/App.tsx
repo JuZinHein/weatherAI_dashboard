@@ -8,6 +8,7 @@ import { ForecastDataset, ViewMode, MapLayer, CityInfo } from './types/forecast'
 import { loadCurrentDataset, loadLargeDataset, saveCustomDataset, clearCustomDataset, DEFAULT_FORECAST_DATA } from './data/defaultForecast';
 import { ShowcaseHeader } from './components/ShowcaseHeader';
 import { OverviewStrip } from './components/OverviewStrip';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ForecastMap2D } from './components/ForecastMap2D';
 import { SatelliteGlobe3D } from './components/SatelliteGlobe3D';
 import { CityForecastPanel } from './components/CityForecastPanel';
@@ -17,6 +18,8 @@ import { ModelInfoModal } from './components/ModelInfoModal';
 import { BURMESE_STRINGS } from './utils/burmese';
 import { getStepTimeWindow } from './utils/forecastTime';
 import { Layers } from 'lucide-react';
+import type { ZarrMeta } from './services/zarrApi';
+import { MYANMAR_CITIES } from './data/myanmarCities';
 
 export default function App() {
   // Prefer bundled zarr-converted forecast over older localStorage uploads
@@ -28,24 +31,16 @@ export default function App() {
 
   // Active timestep index
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
-  // Automated animation playback
-  const [isPlaying, setIsPlaying] = useState<boolean>(true);
+  // Start paused so the first zarr field + basemap can paint (autoplay was aborting every fetch)
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [autoLoop, setAutoLoop] = useState<boolean>(true);
   const ignoreStoredLoad = useRef(false);
 
-  // Selected city (default Yangon)
-  const [selectedCity, setSelectedCity] = useState<CityInfo>(() => {
-    return dataset.cityForecasts[0] || {
-      name: 'Yangon',
-      mmName: 'ရန်ကုန်',
-      lat: 16.8661,
-      lon: 96.1951,
-      elevation: '15m',
-      state: 'ရန်ကုန်တိုင်းဒေသကြီး',
-      forecasts: [],
-    };
-  });
+  // Prefer bundled city forecasts (OverviewStrip/trends); pins still use MYANMAR_CITIES coords
+  const [selectedCity, setSelectedCity] = useState<CityInfo>(
+    () => DEFAULT_FORECAST_DATA.cityForecasts[0] || MYANMAR_CITIES[0]
+  );
 
   const [isUploadOpen, setIsUploadOpen] = useState<boolean>(false);
   const [isModelInfoOpen, setIsModelInfoOpen] = useState<boolean>(false);
@@ -104,14 +99,15 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [toggleFullscreen, dataset.leadHours.length]);
 
-  // Automated showcase playback: walk every forecast step for the current city,
-  // then advance to the next city and start its steps again (kiosk city tour).
+  // Playback: step through forecast windows. City tour only on globe / city-trends —
+  // satellite-radar keeps the selected city fixed while the heat map animates.
   useEffect(() => {
     if (!isPlaying) return;
 
     const intervalMs = Math.round(2600 / playbackSpeed);
     const stepCount = dataset.leadHours.length;
     const cities = dataset.cityForecasts;
+    const tourCities = viewMode !== 'satellite_radar';
 
     const timer = setInterval(() => {
       setCurrentStepIndex((prev) => {
@@ -120,8 +116,7 @@ export default function App() {
           return next;
         }
 
-        // Finished all prediction windows for this city → next city + restart steps
-        if (cities.length > 0) {
+        if (tourCities && cities.length > 0) {
           setSelectedCity((city) => {
             const idx = Math.max(
               0,
@@ -131,12 +126,12 @@ export default function App() {
           });
         }
 
-        return autoLoop || cities.length > 0 ? 0 : prev;
+        return autoLoop || (tourCities && cities.length > 0) ? 0 : prev;
       });
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [isPlaying, playbackSpeed, autoLoop, dataset.leadHours.length, dataset.cityForecasts]);
+  }, [isPlaying, playbackSpeed, autoLoop, dataset.leadHours.length, dataset.cityForecasts, viewMode]);
 
   // Global Drag and Drop for zip files
   const [isWindowDragging, setIsWindowDragging] = useState<boolean>(false);
@@ -219,12 +214,55 @@ export default function App() {
     clearCustomDataset();
     setDataset(DEFAULT_FORECAST_DATA);
     setCurrentStepIndex(1);
-    setSelectedCity(DEFAULT_FORECAST_DATA.cityForecasts[0]);
+    setSelectedCity(MYANMAR_CITIES[0]);
   };
 
   const handleSelectCity = useCallback((city: CityInfo) => {
-    setSelectedCity(city);
+    setSelectedCity((prev) => {
+      // Keep pin coords from map cities, but attach strip forecasts when available
+      const matched = dataset.cityForecasts.find((c) => c.name === city.name);
+      if (matched?.forecasts?.length) {
+        return {
+          ...city,
+          forecasts: matched.forecasts,
+          elevation: matched.elevation || city.elevation,
+          state: matched.state || city.state,
+          mmName: city.mmName || matched.mmName,
+        };
+      }
+      if (city.forecasts?.length) return city;
+      return prev.name === city.name ? prev : city;
+    });
     setCurrentStepIndex(0);
+  }, [dataset.cityForecasts]);
+
+  /** When local forecast.zarr is available, align timeline lead hours with the store. */
+  const handleZarrMeta = useCallback((meta: ZarrMeta) => {
+    if (!meta.lead_hours?.length) return;
+    const init = meta.initialization_utc ? new Date(meta.initialization_utc) : null;
+    const validTimesUtc = meta.lead_hours.map((h) => {
+      if (!init || Number.isNaN(init.getTime())) return '';
+      return new Date(init.getTime() + h * 3600_000).toISOString();
+    });
+    setDataset((prev) => {
+      const sameLeads =
+        prev.leadHours.length === meta.lead_hours.length &&
+        prev.leadHours.every((h, i) => h === meta.lead_hours[i]);
+      if (sameLeads) return prev;
+      return {
+        ...prev,
+        leadHours: meta.lead_hours,
+        validTimesUtc,
+        isFuture: meta.lead_hours.map(() => true),
+        metadata: {
+          ...prev.metadata,
+          model: meta.model_label || prev.metadata.model,
+          initialization_utc: meta.initialization_utc || prev.metadata.initialization_utc,
+          total_rollout_hours:
+            meta.lead_hours[meta.lead_hours.length - 1] ?? prev.metadata.total_rollout_hours,
+        },
+      };
+    });
   }, []);
 
   const currentLeadHour = dataset.leadHours[currentStepIndex] ?? 0;
@@ -241,15 +279,14 @@ export default function App() {
         onViewModeChange={setViewMode}
         isFullscreen={isFullscreen}
         onToggleFullscreen={toggleFullscreen}
-        onOpenUpload={() => setIsUploadOpen(true)}
         isPlaying={isPlaying}
         onTogglePlay={() => setIsPlaying((p) => !p)}
         leadHour={currentLeadHour}
         validMyanmarTime={currentWindow}
       />
 
-      {/* Minimal Atmospheric Overview HUD (shown in 2D/Trends mode, keeping 3D Globe pure and uncluttered) */}
-      {viewMode !== 'globe_3d' && (
+      {/* Overview HUD only on city-trends — radar page uses map pins; empty forecasts crash OverviewStrip */}
+      {viewMode === 'city_trends' && (
         <OverviewStrip
           dataset={dataset}
           selectedCity={selectedCity}
@@ -261,37 +298,43 @@ export default function App() {
       {/* Full-bleed Edge-to-Edge Satellite / Map Viewport (No White Boxes!) */}
       <main className="h-full w-full">
         {viewMode === 'globe_3d' && (
-          <SatelliteGlobe3D
-            dataset={dataset}
-            currentStepIndex={currentStepIndex}
-            selectedCity={selectedCity}
-            onSelectCity={handleSelectCity}
-            isKioskPlaying={isPlaying}
-          />
+          <ErrorBoundary>
+            <SatelliteGlobe3D
+              dataset={dataset}
+              currentStepIndex={currentStepIndex}
+              selectedCity={selectedCity}
+              onSelectCity={handleSelectCity}
+              isKioskPlaying={isPlaying}
+            />
+          </ErrorBoundary>
         )}
 
         {viewMode === 'satellite_radar' && (
-          <ForecastMap2D
-            dataset={dataset}
-            currentStepIndex={currentStepIndex}
-            selectedCity={selectedCity}
-            onSelectCity={handleSelectCity}
-            activeLayer={activeLayer}
-            onLayerChange={setActiveLayer}
-            showWindParticles={showWindParticles}
-            onToggleWindParticles={() => setShowWindParticles((v) => !v)}
-          />
+          <ErrorBoundary>
+            <ForecastMap2D
+              dataset={dataset}
+              currentStepIndex={currentStepIndex}
+              selectedCity={selectedCity}
+              onSelectCity={handleSelectCity}
+              activeLayer={activeLayer}
+              onLayerChange={setActiveLayer}
+              showWindParticles={showWindParticles}
+              onToggleWindParticles={() => setShowWindParticles((v) => !v)}
+              onZarrMeta={handleZarrMeta}
+            />
+          </ErrorBoundary>
         )}
 
-
         {viewMode === 'city_trends' && (
-          <CityForecastPanel
-            dataset={dataset}
-            selectedCity={selectedCity}
-            onSelectCity={handleSelectCity}
-            currentStepIndex={currentStepIndex}
-            onSelectStepIndex={setCurrentStepIndex}
-          />
+          <ErrorBoundary>
+            <CityForecastPanel
+              dataset={dataset}
+              selectedCity={selectedCity}
+              onSelectCity={handleSelectCity}
+              currentStepIndex={currentStepIndex}
+              onSelectStepIndex={setCurrentStepIndex}
+            />
+          </ErrorBoundary>
         )}
       </main>
 

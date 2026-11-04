@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ForecastDataset, ViewMode, MapLayer, CityInfo, StormAlert } from './types/forecast';
+import { ForecastDataset, ViewMode, MapLayer, CityInfo } from './types/forecast';
 import { loadCurrentDataset, loadLargeDataset, saveCustomDataset, clearCustomDataset, DEFAULT_FORECAST_DATA } from './data/defaultForecast';
 import { ShowcaseHeader } from './components/ShowcaseHeader';
 import { OverviewStrip } from './components/OverviewStrip';
@@ -14,20 +14,20 @@ import { CityForecastPanel } from './components/CityForecastPanel';
 import { TimelineControls } from './components/TimelineControls';
 import { DataIngestModal } from './components/DataIngestModal';
 import { ModelInfoModal } from './components/ModelInfoModal';
-import { CycloneWarningCard } from './components/CycloneWarningCard';
 import { BURMESE_STRINGS } from './utils/burmese';
 import { getStepTimeWindow } from './utils/forecastTime';
 import { Layers } from 'lucide-react';
 
 export default function App() {
-  const [dataset, setDataset] = useState<ForecastDataset>(() => loadCurrentDataset());
-  // Default to Google Earth 3D Satellite Globe
-  const [viewMode, setViewMode] = useState<ViewMode>('globe_3d');
+  // Prefer bundled zarr-converted forecast over older localStorage uploads
+  const [dataset, setDataset] = useState<ForecastDataset>(() => DEFAULT_FORECAST_DATA);
+  // Default to Myanmar regional satellite-radar 2D map
+  const [viewMode, setViewMode] = useState<ViewMode>('satellite_radar');
   const [activeLayer, setActiveLayer] = useState<MapLayer>('temperature');
   const [showWindParticles, setShowWindParticles] = useState<boolean>(true);
 
-  // Active timestep index (0 to 5)
-  const [currentStepIndex, setCurrentStepIndex] = useState<number>(1);
+  // Active timestep index
+  const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   // Automated animation playback
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
@@ -51,19 +51,6 @@ export default function App() {
   const [isModelInfoOpen, setIsModelInfoOpen] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
-  // Cyclone HUD — bundled public/storm_alert.json, then overridden by zip upload
-  const [stormAlert, setStormAlert] = useState<StormAlert | null>(null);
-  const [focusCoords, setFocusCoords] = useState<{ lat: number; lon: number } | null>(null);
-
-  useEffect(() => {
-    fetch('/api/storm-alert')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: StormAlert | null) => {
-        if (data) setStormAlert(data);
-      })
-      .catch((e) => console.warn('Could not load bundled storm alert:', e));
-  }, []);
-
   // Sync fullscreen change listener
   useEffect(() => {
     const onFsChange = () => {
@@ -85,19 +72,9 @@ export default function App() {
     }
   }, []);
 
-  // Long zips (14 days) do not fit in localStorage; restore them from IndexedDB.
+  // Skip restoring older IndexedDB uploads so the fresh zarr-converted forecast stays visible.
   useEffect(() => {
-    let cancelled = false;
-    loadLargeDataset().then((saved) => {
-      if (cancelled || ignoreStoredLoad.current || !saved) return;
-      setDataset(saved);
-      setCurrentStepIndex(0);
-      if (saved.cityForecasts?.[0]) setSelectedCity(saved.cityForecasts[0]);
-      if (saved.stormAlert) setStormAlert(saved.stormAlert);
-    });
-    return () => {
-      cancelled = true;
-    };
+    ignoreStoredLoad.current = true;
   }, []);
 
   useEffect(() => {
@@ -235,9 +212,6 @@ export default function App() {
     if (newDataset.cityForecasts && newDataset.cityForecasts.length > 0) {
       setSelectedCity(newDataset.cityForecasts[0]);
     }
-    if (newDataset.stormAlert !== undefined) {
-      setStormAlert(newDataset.stormAlert);
-    }
   };
 
   const handleResetDefault = () => {
@@ -246,7 +220,6 @@ export default function App() {
     setDataset(DEFAULT_FORECAST_DATA);
     setCurrentStepIndex(1);
     setSelectedCity(DEFAULT_FORECAST_DATA.cityForecasts[0]);
-    setStormAlert(null);
   };
 
   const handleSelectCity = useCallback((city: CityInfo) => {
@@ -273,7 +246,6 @@ export default function App() {
         onTogglePlay={() => setIsPlaying((p) => !p)}
         leadHour={currentLeadHour}
         validMyanmarTime={currentWindow}
-        stormAlertActive={Boolean(stormAlert?.alert_active)}
       />
 
       {/* Minimal Atmospheric Overview HUD (shown in 2D/Trends mode, keeping 3D Globe pure and uncluttered) */}
@@ -308,8 +280,6 @@ export default function App() {
             onLayerChange={setActiveLayer}
             showWindParticles={showWindParticles}
             onToggleWindParticles={() => setShowWindParticles((v) => !v)}
-            stormAlert={stormAlert}
-            focusCoords={focusCoords}
           />
         )}
 
@@ -370,20 +340,6 @@ export default function App() {
         onApplyDataset={handleApplyDataset}
         onResetDefault={handleResetDefault}
       />
-
-      {/* Extreme Weather Cyclone Warning Card */}
-      {stormAlert && stormAlert.alert_active && (
-        <CycloneWarningCard
-          alert={stormAlert}
-          onFocusStorm={(lat, lon) => {
-            setViewMode('satellite_radar');
-            setFocusCoords({ lat, lon });
-          }}
-          onClose={() => {
-            setStormAlert((prev) => (prev ? { ...prev, alert_active: false } : null));
-          }}
-        />
-      )}
 
       {/* Model Specs Modal */}
       <ModelInfoModal

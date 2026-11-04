@@ -1,7 +1,7 @@
 import React from 'react';
 import { ViewMode } from '../types/forecast';
 import { BURMESE_STRINGS } from '../utils/burmese';
-import { Maximize2, Minimize2, Upload, Play, Pause, Globe, Map, BarChart3, Cpu, Radio, Clock } from 'lucide-react';
+import { Maximize2, Minimize2, Upload, Play, Pause, Globe, Map, BarChart3, Cpu, Clock } from 'lucide-react';
 
 interface ShowcaseHeaderProps {
   viewMode: ViewMode;
@@ -13,7 +13,6 @@ interface ShowcaseHeaderProps {
   onTogglePlay: () => void;
   leadHour?: number;
   validMyanmarTime: string;
-  stormAlertActive?: boolean;
 }
 
 export const ShowcaseHeader: React.FC<ShowcaseHeaderProps> = ({
@@ -25,7 +24,6 @@ export const ShowcaseHeader: React.FC<ShowcaseHeaderProps> = ({
   isPlaying,
   onTogglePlay,
   validMyanmarTime,
-  stormAlertActive,
 }) => {
   const navBtn = (mode: ViewMode, icon: React.ReactNode, label: string) => (
     <button
@@ -75,16 +73,6 @@ export const ShowcaseHeader: React.FC<ShowcaseHeaderProps> = ({
 
         {/* Actions — always visible on the right, never overlapped */}
         <div className="relative z-10 flex shrink-0 items-center gap-1.5 sm:gap-2 ml-auto">
-          {stormAlertActive && (
-            <div
-              className="hidden sm:flex items-center gap-1.5 rounded-full border border-rose-500/50 bg-rose-950/80 px-2.5 py-1.5 text-[11px] font-bold text-rose-300 animate-pulse whitespace-nowrap"
-              title="ဘင်္ဂလားပင်လယ်အော် ဆိုင်ကလုန်းမုန်တိုင်း သတိပေးချက်"
-            >
-              <Radio className="h-3.5 w-3.5 text-rose-400 shrink-0" />
-              <span className="hidden lg:inline">မုန်တိုင်း</span>
-            </div>
-          )}
-
           {validMyanmarTime && (
             <div
               className="hidden 2xl:flex max-w-[16rem] items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-950/40 px-2.5 py-1 text-[11px] text-emerald-300"

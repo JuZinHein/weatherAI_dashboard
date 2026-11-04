@@ -106,6 +106,79 @@ export function getWindColor(speed: number): [number, number, number] {
   return [253, 231, 37];
 }
 
+/** CSS legend bars — must match getTemperatureColor / getWindColor stops. */
+export const TEMPERATURE_LEGEND_GRADIENT =
+  'linear-gradient(to right, rgb(34,66,150), rgb(60,115,185), rgb(115,180,220), rgb(198,225,240), rgb(255,255,200), rgb(254,210,100), rgb(245,130,45), rgb(220,50,32), rgb(160,15,25), rgb(105,5,15))';
+
+export const WIND_LEGEND_GRADIENT =
+  'linear-gradient(to right, rgb(68,1,84), rgb(70,35,110), rgb(49,104,142), rgb(33,145,140), rgb(94,201,98), rgb(200,220,40), rgb(253,231,37))';
+
+export const TEMPERATURE_LEGEND_RANGE = { min: -5, max: 38, unit: '°C' };
+/** Viridis wind scale tops out around 25 km/h; stronger winds stay bright yellow. */
+export const WIND_LEGEND_RANGE = { min: 0, max: 25, unit: 'km/h' };
+
+/**
+ * Draw a soft, interpolated heatmap (no blocky pixels).
+ * Builds a tiny offscreen grid image then stretches it with high-quality smoothing.
+ */
+export function drawSmoothHeatOverlay(
+  ctx: CanvasRenderingContext2D,
+  grid: number[][],
+  colorFn: (v: number) => [number, number, number],
+  toScreen: (lat: number, lon: number) => { x: number; y: number },
+  alpha = 0.55,
+  clipPath?: [number, number][]
+): void {
+  const rows = grid?.length ?? 0;
+  const cols = grid?.[0]?.length ?? 0;
+  if (rows < 2 || cols < 2) return;
+
+  const off = document.createElement('canvas');
+  off.width = cols;
+  off.height = rows;
+  const octx = off.getContext('2d');
+  if (!octx) return;
+
+  const img = octx.createImageData(cols, rows);
+  const data = img.data;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const [cr, cg, cb] = colorFn(grid[r][c]);
+      const i = (r * cols + c) * 4;
+      data[i] = cr;
+      data[i + 1] = cg;
+      data[i + 2] = cb;
+      data[i + 3] = 255;
+    }
+  }
+  octx.putImageData(img, 0, 0);
+
+  const topLeft = toScreen(REGION_BOUNDS.maxLat, REGION_BOUNDS.minLon);
+  const botRight = toScreen(REGION_BOUNDS.minLat, REGION_BOUNDS.maxLon);
+  const w = botRight.x - topLeft.x;
+  const h = botRight.y - topLeft.y;
+  if (w <= 1 || h <= 1) return;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
+  if (clipPath && clipPath.length > 2) {
+    ctx.beginPath();
+    clipPath.forEach(([lon, lat], idx) => {
+      const p = toScreen(lat, lon);
+      if (idx === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
+    ctx.closePath();
+    ctx.clip();
+  }
+
+  ctx.drawImage(off, topLeft.x, topLeft.y, w, h);
+  ctx.restore();
+}
+
 export interface MapBox {
   x: number;
   y: number;

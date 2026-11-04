@@ -7,12 +7,12 @@ Local **offline / zip-first** showcase. The browser never calls NVIDIA NIM, Open
 1. Bundled under `public/forecast_data/` + `src/data/`, or  
 2. Loaded from a Colab/Kaggle `.zip` (drag-drop / upload).
 
-**UI shows only what the zip has:** **2 m temperature** and **10 m wind**. Extra parameter catalogs / live API augmentation were removed so office demos stay honest and offline-capable.
+**UI shows only what the zip has:** **2 m temperature** and **10 m wind**. Extra parameter catalogs / live API augmentation were removed so office demos stay honest and offline-capable. Default view is the **2D Myanmar map**; bundled sample is a **72 h** local-zarr rollout.
 
 ```bash
 npm install
 npm run dev
-# → http://localhost:3000
+# → http://localhost:5180   (normal non-local app stays on :3000)
 ```
 
 Deep start guide for newcomers: [`README.md`](README.md).
@@ -26,29 +26,28 @@ NVIDIA FourCastNet / Earth2Studio / GFS stay under their own upstream terms.
 
 ```text
 Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/
-  server.ts                    Express + Vite; serves UI + local storm_alert.json
+  server.ts                    Express + Vite on port 5180
   notebook/
     NVIDIA_Earth2_GPU_Colab_Myanmar.ipynb   GPU forecast factory → zip
-  public/forecast_data/        sample storm_alert.json, layers, configs
+  public/forecast_data/        layer PNGs, configs, optional storm_alert.json
   public/textures/             globe / map imagery (offline)
   src/
-    App.tsx                    city tour playback, zip drop, storm state
+    App.tsx                    city tour playback, zip drop (boots from DEFAULT_FORECAST_DATA)
     components/
       SatelliteGlobe3D.tsx     3D Earth, city popup, rotate speed
-      ForecastMap2D.tsx        2D map — Myanmar border; temp / wind layers
+      ForecastMap2D.tsx        2D map — Myanmar border; smooth temp / wind overlays
       CityForecastPanel.tsx    city trends / table (temp + wind only)
       CityWeatherPopup3D.tsx   auto city card
-      CycloneWarningCard.tsx   storm HUD
       TimelineControls.tsx     time-window scrubber
-    data/                      defaultForecast + forecastData.json
+    data/                      defaultForecast + forecastData.json (72 h grids)
     services/
       weatherVariables.ts      two real FCN export fields
       weatherApi.ts            offline stub (no remote fetch)
     utils/
-      zipForecastParser.ts     parse zip (+ storm_alert.json)
+      zipForecastParser.ts     parse zip (+ optional storm_alert.json)
       forecastTime.ts          Burmese date windows
       burmese.ts               digits / copy
-      geo.ts                   Myanmar border, sampling
+      geo.ts                   Myanmar border, colormaps, sampling
   backend/                     optional pipeline sketch (not used by npm run dev)
   README.md
   how_this_works.md
@@ -57,23 +56,23 @@ Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/
 ## End-to-end flow
 
 ```text
-NOAA GFS (73 ch, 0.25°)          [needs internet + GPU notebook]
+NOAA GFS / local zarr IC
         │
         ▼
-Earth2Studio + NVIDIA FourCastNet (FCN)
+Earth2Studio + NVIDIA FourCastNet (FCN)   [GPU notebook, or pre-bundled sample]
         │
         ▼
 Crop Myanmar  9–29°N, 92–102°E
         │
-        ├─ temp / wind grids → regional_forecast.npz
-        ├─ BoB wind scan ≥ 65 km/h → storm_alert.json
+        ├─ temp / wind grids → regional_forecast.npz (or forecastData.json)
+        ├─ optional BoB wind scan ≥ 65 km/h → storm_alert.json
         └─ CSV / PNG / metadata
         │
         ▼
-ZIP  →  copy to office PC / drop into showcase
+ZIP (or bundled sample)  →  office PC / drop into showcase
         │
         ▼
-React UI (globe / 2D map / cities) + cyclone card
+React UI (2D map default / globe / cities) — temp + wind only
         │
         └── offline: no NIM / Open-Meteo / remote map tiles
 ```
@@ -82,12 +81,12 @@ React UI (globe / 2D map / cities) + cyclone card
 
 | Output | From |
 | --- | --- |
-| 2 m temperature, 10 m wind | **NVIDIA FourCastNet** (GFS IC) via Earth2Studio `FCN` |
+| 2 m temperature, 10 m wind | **NVIDIA FourCastNet** via Earth2Studio `FCN` (or bundled local-zarr sample) |
 | `storm_alert.json` | Notebook **rule** on FCN wind in Lat 10–22 / Lon 92–96; active if peak ≥ **65 km/h** |
-| Showcase HUD | Reads JSON only — **no** live re-scan of grids in the browser |
+| Showcase UI | **Does not show** a cyclone card in this build — temp + wind maps/charts only |
 | Humidity / rain / pressure / clouds | **Not in this product** (not exported by the notebook zip) |
 
-Honest line for demos: *“Forecast fields from NVIDIA FourCastNet (temperature + 10 m wind); cyclone banner is a Bay of Bengal wind threshold on that forecast — not StormScope and not a DMH bulletin. UI is offline zip / bundled sample.”*
+Honest line for demos: *“Forecast fields from NVIDIA FourCastNet (temperature + 10 m wind). Offline zip / bundled 72 h sample. Optional storm_alert.json may be in the zip but is not shown in the UI.”*
 
 The **65 km/h** floor is this project’s round number for the North Indian Ocean **cyclonic storm** class, which starts at **34 knots (62–88 km/h)** in the IMD / WMO–ESCAP Panel tables. Myanmar’s national row in that plan uses the same 34-knot floor. This app does not track a cyclone eye or issue an official warning.
 
@@ -110,7 +109,7 @@ This is the GPU export the UI is built to load. It does **not** run inside `npm 
 | `u10m` + `v10m` → `wind_kmh` | wind maps, city km/h |
 | Lat **29°N → 9°N**, Lon **92°E → 102°E**, step **0.25°** (81 × 41) | `sampleGrid` in `src/utils/geo.ts` (row 0 is north) |
 | 12 cities below | `src/data/forecastData.json` + `src/utils/burmese.ts` |
-| BoB scan Lat **10–22**, Lon **92–96**, peak **≥ 65 km/h** | `storm_alert.json` → cyclone card |
+| BoB scan Lat **10–22**, Lon **92–96**, peak **≥ 65 km/h** | optional `storm_alert.json` (parsed, **not shown** in UI) |
 
 The notebook forces that grid orientation before saving. The parser flips a north/south or east/west axis if a zip arrives reversed.
 
@@ -139,39 +138,37 @@ The zip’s CSV is the city you picked in Colab. After upload, the UI **re-sampl
 | --- | --- |
 | `regional_forecast.npz` | `temperature_c`, `wind_kmh`, lat/lon, lead hours |
 | `metadata.json` | run provenance |
-| `storm_alert.json` | cyclone HUD payload (optional) |
+| `storm_alert.json` | optional notebook payload (parsed; UI does not render it) |
 | `all_steps_with_future_flags.csv` | city/time table |
 | `myanmar_forecast.png` / `city_trend.png` | optional benchmarks |
 
-Parser: `src/utils/zipForecastParser.ts`. Missing `storm_alert.json` → no override from that zip (bundled alert stays, or none after reset). The browser will **not** invent an alert from the wind grid alone.
+Parser: `src/utils/zipForecastParser.ts`. The browser will **not** invent an alert from the wind grid alone. Express no longer serves `/api/storm-alert`.
 
 ## Showcase behaviour
 
 | Feature | Behaviour |
 | --- | --- |
+| Boot | Always starts from bundled `DEFAULT_FORECAST_DATA` (skips older IndexedDB uploads) |
+| Default view | **2D Myanmar map**; header switches to 3D globe or city trends |
 | Time UI | Windows like `၃-၁၁-၂၀၂၆ (၀၀:၀၀ မှ ၀၆:၀၀)` via `forecastTime.ts` |
 | Playback | Steps through windows; after last step → **next city** + reopen popup |
 | City popup | Opens on start / city change; close with X until city changes again |
-| 2D map | Myanmar national border only; layers are temp / wind (+ decorative radar view) |
+| 2D map | Myanmar border + smooth temp / wind heat overlays (independent toggles) |
 | City panel | Temp + wind only — no synthesized multi-variable catalog |
 | Globe | Auto-rotate with speed slider; slower default |
-| Storm | Bundled `public/forecast_data/storm_alert.json` on load; zip can replace in-memory |
+| Storm | Not shown in UI |
 | Network | No remote weather or map-tile calls from the UI |
 
 Keyboard: `Space` play/pause · `←`/`→` step · `F` fullscreen.
-
-## Local storm alert file
-
-On startup the local Express server reads `public/forecast_data/storm_alert.json` for the cyclone card. No NVIDIA cloud call. Zip uploads replace the alert in the browser only — nothing is written back to disk.
 
 ## Bounds
 
 | Name | Value |
 | --- | --- |
 | Myanmar crop | Lat **9–29°N**, Lon **92–102°E** (~0.25°) |
-| Lead hours | **0, 6, 12, 18, 24, 30** (shown as date windows); longer zips supported |
-| BoB alert box | Lat **10–22**, Lon **92–96** |
-| Cyclone wind | **≥ 65 km/h** |
+| Bundled lead hours | **0 … 72** every 6 h (13 steps); longer Colab zips supported |
+| BoB alert box (notebook) | Lat **10–22**, Lon **92–96** |
+| Cyclone wind (notebook) | **≥ 65 km/h** |
 | Model fields in zip / UI | **2 m temperature**, **10 m wind** only |
 
 ## References
@@ -201,9 +198,9 @@ Installed pin in the notebook: `earth2studio[fcn]==0.20.0`. Inference **exports*
 
 ### Storm scan vs StormScope
 
-**In this project.** After FCN finishes, the notebook scans 10 m wind on Lat **10–22°N**, Lon **92–96°E**. If the peak is **≥ 65 km/h**, it writes `storm_alert.json`. The website only displays that file.
+**In this project.** After FCN finishes, the notebook can scan 10 m wind on Lat **10–22°N**, Lon **92–96°E** and write `storm_alert.json` when peak ≥ **65 km/h**. The zip parser may keep that JSON; the **current UI does not display** it.
 
-**Not in this project.** [StormScope](https://nvidia.github.io/earth2studio/main/examples/04_nowcasting/03_stormscope_goes_example/) is a different Earth2Studio model (GOES satellite and MRMS radar nowcasting). The notebook does not install StormScope, Earth2Grid, or NATTEN. A cyclone card here is the wind-threshold JSON above, not a StormScope nowcast.
+**Not in this project.** [StormScope](https://nvidia.github.io/earth2studio/main/examples/04_nowcasting/03_stormscope_goes_example/) is a different Earth2Studio model (GOES satellite and MRMS radar nowcasting). The notebook does not install StormScope, Earth2Grid, or NATTEN.
 
 | Threshold source | What it says |
 | --- | --- |
@@ -221,7 +218,7 @@ Private office showcase code. FourCastNet, Earth2Studio, GFS, and the IMD/WMO do
 | --- | --- |
 | UI / Burmese / views | `src/App.tsx`, `src/components/*`, `src/utils/burmese.ts` |
 | Time window labels | `src/utils/forecastTime.ts` |
-| Zip ingest / storm from zip | `src/utils/zipForecastParser.ts` |
+| Zip ingest | `src/utils/zipForecastParser.ts` |
 | Real variable list (temp + wind) | `src/services/weatherVariables.ts` |
 | Export / FCN / alert scan | `notebook/NVIDIA_Earth2_GPU_Colab_Myanmar.ipynb` |
 | Bundled sample | `public/forecast_data/*`, `src/data/forecastData.json` |

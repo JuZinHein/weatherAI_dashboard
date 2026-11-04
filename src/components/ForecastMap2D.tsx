@@ -1,11 +1,16 @@
 import React, { useRef, useEffect, useState, useMemo } from 'react';
-import { CityInfo, ForecastDataset, MapLayer, StormAlert } from '../types/forecast';
+import { CityInfo, ForecastDataset, MapLayer } from '../types/forecast';
 import {
   REGION_BOUNDS,
   MYANMAR_BORDER_POINTS,
   getTemperatureColor,
   getWindColor,
   sampleGrid,
+  drawSmoothHeatOverlay,
+  TEMPERATURE_LEGEND_GRADIENT,
+  WIND_LEGEND_GRADIENT,
+  TEMPERATURE_LEGEND_RANGE,
+  WIND_LEGEND_RANGE,
 } from '../utils/geo';
 import {
   WEATHER_VARIABLES,
@@ -18,10 +23,14 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
-  Palette,
   Maximize2,
-  Radio,
+  ChevronDown,
+  Layers,
+  Thermometer,
 } from 'lucide-react';
+
+/** Zip exports only these two forecast fields. */
+const ZIP_FORECAST_FIELDS = WEATHER_VARIABLES;
 
 interface ForecastMap2DProps {
   dataset: ForecastDataset;
@@ -32,8 +41,6 @@ interface ForecastMap2DProps {
   onLayerChange: (layer: MapLayer) => void;
   showWindParticles: boolean;
   onToggleWindParticles: () => void;
-  stormAlert?: StormAlert | null;
-  focusCoords?: { lat: number; lon: number } | null;
 }
 
 interface WindParticle {
@@ -43,13 +50,6 @@ interface WindParticle {
   maxAge: number;
   speed: number;
   flowAngle: number;
-}
-
-interface RainParticle {
-  lat: number;
-  lon: number;
-  length: number;
-  speed: number;
 }
 
 const REGION_LABELS = [
@@ -67,18 +67,60 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
   onLayerChange,
   showWindParticles,
   onToggleWindParticles,
-  stormAlert,
-  focusCoords,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Selected weather variable for the 2D layer (local zip: temp + wind only)
-  const [selectedVariableId, setSelectedVariableId] = useState<string>('temperature_2m');
+  // Zip has only 2 forecast fields — smooth heatmaps, one-by-one or together
+  const [showTempLayer, setShowTempLayer] = useState(true);
+  const [showWindLayer, setShowWindLayer] = useState(false);
+  const [probeFocusId, setProbeFocusId] = useState<string>('temperature_2m');
+  const [isVariableMenuOpen, setIsVariableMenuOpen] = useState(false);
 
-  // Matplotlib overlay toggle
-  const [useMatplotlibOverlay, setUseMatplotlibOverlay] = useState<boolean>(false);
-  const matplotlibImgRef = useRef<HTMLImageElement | null>(null);
+  const bothZipLayersOn = showTempLayer && showWindLayer;
+  const anyZipLayerOn = showTempLayer || showWindLayer;
+  const everythingOn = showTempLayer && showWindLayer && showWindParticles;
+
+  const selectProbeFocus = (id: string) => {
+    setProbeFocusId(id);
+    onLayerChange(id.startsWith('wind') ? 'wind' : 'temperature');
+  };
+
+  const toggleTempLayer = () => {
+    setShowTempLayer((on) => {
+      const next = !on;
+      if (next) selectProbeFocus('temperature_2m');
+      else if (showWindLayer) selectProbeFocus('wind_speed_10m');
+      return next;
+    });
+  };
+
+  const toggleWindLayer = () => {
+    setShowWindLayer((on) => {
+      const next = !on;
+      if (next) {
+        selectProbeFocus('wind_speed_10m');
+        if (!showWindParticles) onToggleWindParticles();
+      } else if (showTempLayer) {
+        selectProbeFocus('temperature_2m');
+      }
+      return next;
+    });
+  };
+
+  const enableEverything = () => {
+    setShowTempLayer(true);
+    setShowWindLayer(true);
+    selectProbeFocus('temperature_2m');
+    if (!showWindParticles) onToggleWindParticles();
+  };
+
+  const disableEverything = () => {
+    setShowTempLayer(true);
+    setShowWindLayer(false);
+    selectProbeFocus('temperature_2m');
+    if (showWindParticles) onToggleWindParticles();
+  };
 
   // High-Resolution Satellite Base Image
   const satelliteImgRef = useRef<HTMLImageElement | null>(null);
@@ -97,25 +139,6 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
       setSatelliteLoaded(true);
     };
   }, []);
-
-  // Lead hour string for Matplotlib overlays
-  const hourStr = String(dataset.leadHours[currentStepIndex] ?? 0).padStart(2, '0');
-  const overlayUrl =
-    selectedVariableId.startsWith('wind') || activeLayer === 'wind'
-      ? `/forecast_data/layers/wind_${hourStr}h.png`
-      : `/forecast_data/layers/temp_${hourStr}h.png`;
-
-  useEffect(() => {
-    if (!useMatplotlibOverlay) {
-      matplotlibImgRef.current = null;
-      return;
-    }
-    const img = new Image();
-    img.src = overlayUrl;
-    img.onload = () => {
-      matplotlibImgRef.current = img;
-    };
-  }, [overlayUrl, useMatplotlibOverlay]);
 
   const [activePopupCity, setActivePopupCity] = useState<CityInfo | null>(null);
 
@@ -139,14 +162,6 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
   const dragStartRef = useRef({ x: 0, y: 0 });
   const dragDistRef = useRef(0);
 
-  // Focus coordinates effect
-  useEffect(() => {
-    if (focusCoords && containerRef.current) {
-      setZoom(1.9);
-      setPan({ x: 70, y: 50 });
-    }
-  }, [focusCoords]);
-
   // Pre-generate wind streamlines
   const particlesRef = useRef<WindParticle[]>([]);
   useEffect(() => {
@@ -164,25 +179,10 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     particlesRef.current = particles;
   }, []);
 
-  // Pre-generate rain particles for precipitation layers
-  const rainParticlesRef = useRef<RainParticle[]>([]);
-  useEffect(() => {
-    const rain: RainParticle[] = [];
-    for (let i = 0; i < 180; i++) {
-      rain.push({
-        lat: 13.0 + Math.random() * 14.0,
-        lon: 92.0 + Math.random() * 9.0,
-        length: 8 + Math.random() * 12,
-        speed: 0.12 + Math.random() * 0.16,
-      });
-    }
-    rainParticlesRef.current = rain;
-  }, []);
-
   const currentTempGrid = dataset.temperatureGrid[currentStepIndex] || dataset.temperatureGrid[0];
   const currentWindGrid = dataset.windGrid[currentStepIndex] || dataset.windGrid[0];
   const currentVarDef =
-    WEATHER_VARIABLES_BY_ID[selectedVariableId] || WEATHER_VARIABLES[0];
+    WEATHER_VARIABLES_BY_ID[probeFocusId] || WEATHER_VARIABLES[0];
 
   // Canvas render loop
   useEffect(() => {
@@ -304,166 +304,30 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         ctx.restore();
       }
 
-      // 3. Matplotlib Raw Overlay (If explicitly toggled)
-      if (useMatplotlibOverlay && matplotlibImgRef.current && matplotlibImgRef.current.complete) {
-        const pTopLeft = toScreen(REGION_BOUNDS.maxLat, REGION_BOUNDS.minLon);
-        const pBotRight = toScreen(REGION_BOUNDS.minLat, REGION_BOUNDS.maxLon);
-        ctx.save();
-        ctx.globalAlpha = 0.65;
-        ctx.drawImage(matplotlibImgRef.current, pTopLeft.x, pTopLeft.y, pBotRight.x - pTopLeft.x, pBotRight.y - pTopLeft.y);
-        ctx.restore();
-      }
-
-      // ==========================================================
-      // 4. ANIMATED GRAPHICS & DYNAMIC WEATHER OVERLAYS PER VARIABLE
-      // ==========================================================
-
-      // (A) HEAT & TEMPERATURE ANIMATION (Thermal Radiance + Heat Shimmer Waves)
-      if (selectedVariableId === 'temperature_2m') {
-        ctx.save();
-        // Central Myanmar Thermal Radiance Bloom (Chauk / Mandalay / Magway high heat zone)
-        const heatCenters = [
-          { lat: 21.3, lon: 95.0, r: 160, temp: 37, label: '၃၇°C' },
-          { lat: 21.9, lon: 96.1, r: 140, temp: 35, label: '၃၅°C' },
-          { lat: 16.8, lon: 96.1, r: 120, temp: 33, label: '၃၃°C' },
-          { lat: 20.1, lon: 92.9, r: 110, temp: 31, label: '၃၁°C' },
-        ];
-
-        heatCenters.forEach((hc) => {
-          const pt = toScreen(hc.lat, hc.lon);
-          const rad = hc.r * (zoom * 0.85);
-          const pulse = Math.sin(pulseTime * 2 + hc.lat) * 8;
-
-          // Glowing thermal radiance radial gradient
-          const grad = ctx.createRadialGradient(pt.x, pt.y, 10, pt.x, pt.y, rad + pulse);
-          grad.addColorStop(0, 'rgba(239, 68, 68, 0.45)');
-          grad.addColorStop(0.35, 'rgba(245, 158, 11, 0.30)');
-          grad.addColorStop(0.7, 'rgba(251, 191, 36, 0.15)');
-          grad.addColorStop(1, 'rgba(245, 158, 11, 0.0)');
-
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, rad + pulse, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Isothermal Contour Line
-          ctx.strokeStyle = 'rgba(254, 215, 170, 0.50)';
-          ctx.lineWidth = 1.2;
-          ctx.setLineDash([4, 4]);
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, (rad + pulse) * 0.65, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        });
-
-        // Atmospheric Heat Haze Shimmer Waves (Animated Undulations)
-        ctx.strokeStyle = 'rgba(251, 191, 36, 0.22)';
-        ctx.lineWidth = 1.4;
-        const p1 = toScreen(23.5, 93.5);
-        const p2 = toScreen(19.0, 97.5);
-        const startY = Math.min(p1.y, p2.y);
-        const endY = Math.max(p1.y, p2.y);
-
-        for (let y = startY; y <= endY; y += 32) {
-          ctx.beginPath();
-          for (let x = p1.x - 40; x <= p2.x + 40; x += 12) {
-            const waveY = y + Math.sin(pulseTime * 2.8 + x * 0.035 + y * 0.05) * 4;
-            if (x === p1.x - 40) ctx.moveTo(x, waveY);
-            else ctx.lineTo(x, waveY);
-          }
-          ctx.stroke();
-        }
-        ctx.restore();
-      }
-
-      // (B) Decorative radar sweep view (visual only — not an FCN zip field)
-      else if (selectedVariableId === 'radar_reflectivity') {
-        ctx.save();
-        // Radar Sweep Radar Station (Yangon / Naypyitaw Radar)
-        const radarCenter = toScreen(18.5, 96.0);
-        const radarRadius = 240 * zoom;
-        const sweepAngle = (pulseTime * 1.8) % (Math.PI * 2);
-
-        // Circular range rings
-        ctx.strokeStyle = 'rgba(16, 185, 129, 0.35)';
-        ctx.lineWidth = 1;
-        [0.35, 0.7, 1.0].forEach((ratio) => {
-          ctx.beginPath();
-          ctx.arc(radarCenter.x, radarCenter.y, radarRadius * ratio, 0, Math.PI * 2);
-          ctx.stroke();
-        });
-
-        // Rotating Doppler Sweep Beam with Phosphor Persistence
-        const sweepGrad = ctx.createRadialGradient(
-          radarCenter.x,
-          radarCenter.y,
-          0,
-          radarCenter.x,
-          radarCenter.y,
-          radarRadius
+      // 3. Soft interpolated forecast overlays (no block pixels, no Matplotlib PNGs)
+      // Temp = filled smooth heat · Wind alone = smooth heat · Both = temp heat + streamlines
+      if (showTempLayer && currentTempGrid) {
+        drawSmoothHeatOverlay(
+          ctx,
+          currentTempGrid,
+          getTemperatureColor,
+          toScreen,
+          bothZipLayersOn ? 0.5 : 0.58,
+          MYANMAR_BORDER_POINTS
         );
-        sweepGrad.addColorStop(0, 'rgba(52, 211, 153, 0.5)');
-        sweepGrad.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
-
-        ctx.fillStyle = sweepGrad;
-        ctx.beginPath();
-        ctx.moveTo(radarCenter.x, radarCenter.y);
-        ctx.arc(radarCenter.x, radarCenter.y, radarRadius, sweepAngle - 0.45, sweepAngle);
-        ctx.closePath();
-        ctx.fill();
-
-        // Doppler Reflectivity Rain Cells
-        const rainCells = [
-          { lat: 17.2, lon: 95.8, r: 45, intensity: 'heavy' },
-          { lat: 19.8, lon: 93.6, r: 55, intensity: 'moderate' },
-          { lat: 15.2, lon: 97.8, r: 40, intensity: 'light' },
-          { lat: 24.2, lon: 96.5, r: 35, intensity: 'moderate' },
-        ];
-
-        rainCells.forEach((c) => {
-          const pt = toScreen(c.lat, c.lon);
-          const r = c.r * zoom;
-          const p = Math.sin(pulseTime * 3 + c.lat) * 4;
-
-          const cellGrad = ctx.createRadialGradient(pt.x, pt.y, 5, pt.x, pt.y, r + p);
-          if (c.intensity === 'heavy') {
-            cellGrad.addColorStop(0, 'rgba(239, 68, 68, 0.75)');
-            cellGrad.addColorStop(0.5, 'rgba(245, 158, 11, 0.55)');
-            cellGrad.addColorStop(1, 'rgba(34, 197, 94, 0.0)');
-          } else if (c.intensity === 'moderate') {
-            cellGrad.addColorStop(0, 'rgba(245, 158, 11, 0.70)');
-            cellGrad.addColorStop(0.6, 'rgba(34, 197, 94, 0.45)');
-            cellGrad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
-          } else {
-            cellGrad.addColorStop(0, 'rgba(34, 197, 94, 0.65)');
-            cellGrad.addColorStop(0.7, 'rgba(56, 189, 248, 0.35)');
-            cellGrad.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
-          }
-
-          ctx.fillStyle = cellGrad;
-          ctx.beginPath();
-          ctx.arc(pt.x, pt.y, r + p, 0, Math.PI * 2);
-          ctx.fill();
-        });
-
-        // Falling Rain Particle Streaks
-        ctx.strokeStyle = 'rgba(186, 230, 253, 0.65)';
-        ctx.lineWidth = 1.2;
-        rainParticlesRef.current.forEach((rp) => {
-          rp.lat -= rp.speed * 0.08;
-          if (rp.lat < 11.0) rp.lat = 26.5;
-
-          const pos = toScreen(rp.lat, rp.lon);
-          ctx.beginPath();
-          ctx.moveTo(pos.x, pos.y);
-          ctx.lineTo(pos.x - 3, pos.y + rp.length);
-          ctx.stroke();
-        });
-        ctx.restore();
+      } else if (showWindLayer && currentWindGrid) {
+        drawSmoothHeatOverlay(
+          ctx,
+          currentWindGrid,
+          getWindColor,
+          toScreen,
+          0.55,
+          MYANMAR_BORDER_POINTS
+        );
       }
 
-      // (C) DYNAMIC WIND STREAMLINES (When Wind Layer or Particle Streamlines Active)
-      if (showWindParticles || selectedVariableId.startsWith('wind') || activeLayer === 'wind') {
+      // 4. Wind streamlines (used when wind layer / streamlines toggle is on)
+      if (showWindParticles || showWindLayer) {
         ctx.save();
         ctx.lineWidth = 1.8;
 
@@ -568,39 +432,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         ctx.restore();
       });
 
-      // 8. Cyclone Storm Alert Beacon
-      if (stormAlert && stormAlert.alert_active && stormAlert.coordinates) {
-        const stormPos = toScreen(stormAlert.coordinates.lat, stormAlert.coordinates.lon);
-        ctx.save();
-        const pulseR = 14 + Math.sin(pulseTime * 3) * 6;
-
-        ctx.beginPath();
-        ctx.arc(stormPos.x, stormPos.y, pulseR * 2.2, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(244, 63, 94, 0.4)';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-
-        ctx.beginPath();
-        ctx.arc(stormPos.x, stormPos.y, pulseR, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(244, 63, 94, 0.3)';
-        ctx.fill();
-        ctx.strokeStyle = '#f43f5e';
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-
-        ctx.font = 'bold 11px "Noto Sans Myanmar", sans-serif';
-        ctx.fillStyle = '#fecdd3';
-        ctx.shadowColor = 'rgba(0,0,0,0.95)';
-        ctx.shadowBlur = 4;
-        ctx.fillText(
-          `🚨 ဆိုင်ကလုန်း (${toBurmeseNumber(stormAlert.max_sustained_wind_kmh)} km/h)`,
-          stormPos.x + 18,
-          stormPos.y + 4
-        );
-        ctx.restore();
-      }
-
-      // 9. City Meteorological Stations (Google Maps Style: High-Legibility, Readable Font in All Situations + Non-Overlapping Placement)
+      // 8. City Meteorological Stations
       const cityFontSize = 11.5;
       const badgeH = 22;
       const badgePadX = 7;
@@ -822,14 +654,16 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     dataset,
     currentStepIndex,
     selectedCity,
-    selectedVariableId,
+    probeFocusId,
     activeLayer,
     showWindParticles,
-    useMatplotlibOverlay,
+    showTempLayer,
+    showWindLayer,
+    anyZipLayerOn,
+    bothZipLayersOn,
     zoom,
     pan,
     probe,
-    stormAlert,
     satelliteLoaded,
   ]);
 
@@ -883,7 +717,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
       const temp = sampleGrid(currentTempGrid, lat, lon);
       const wind = sampleGrid(currentWindGrid, lat, lon);
 
-      const val = selectedVariableId.startsWith('wind') ? wind : temp;
+      const val = probeFocusId.startsWith('wind') ? wind : temp;
 
       setProbe({
         x,
@@ -989,82 +823,153 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         />
       )}
 
-      {/* Top Left Toolbar (Burmese Buttons) */}
-      <div className="absolute top-20 left-12 z-20 flex flex-wrap items-center gap-2">
-        {/* Button 1: 2m Temperature */}
+      {/* Top Left — one-by-one zip layers + Everything */}
+      <div className="absolute top-20 left-12 z-20 flex max-w-[min(980px,calc(100vw-6rem))] flex-wrap items-center gap-2">
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setIsVariableMenuOpen((o) => !o)}
+            className="flex items-center gap-2 rounded-full border border-white/20 bg-black/80 px-3.5 py-2 text-xs font-semibold text-white shadow-lg backdrop-blur-xl transition hover:bg-black/90 cursor-pointer"
+          >
+            <Layers className="h-3.5 w-3.5 text-emerald-400" />
+            <span className="max-w-[220px] truncate">
+              {bothZipLayersOn
+                ? 'အပူချိန် + လေ (၂ မျိုး)'
+                : `${currentVarDef.labelMm} (${currentVarDef.unit})`}
+            </span>
+            <ChevronDown className={`h-3.5 w-3.5 text-slate-400 transition ${isVariableMenuOpen ? 'rotate-180' : ''}`} />
+          </button>
+
+          {isVariableMenuOpen && (
+            <>
+              <button
+                type="button"
+                className="fixed inset-0 z-40 cursor-default"
+                aria-label="Close"
+                onClick={() => setIsVariableMenuOpen(false)}
+              />
+              <div className="absolute left-0 top-12 z-50 w-80 overflow-hidden rounded-2xl border border-white/20 bg-black/95 shadow-2xl backdrop-blur-2xl">
+                <div className="border-b border-white/10 px-3 py-2">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Zip ညွှန်းကိန်း — တစ်ခုချင်း / အားလုံး
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-slate-500">
+                    ၂ မျိုးသာ · timeline ဖြင့် animate လုပ်သည်
+                  </div>
+                </div>
+                <div className="p-1.5 space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (everythingOn) disableEverything();
+                      else enableEverything();
+                      setIsVariableMenuOpen(false);
+                    }}
+                    className={`flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-left text-xs transition cursor-pointer ${
+                      everythingOn
+                        ? 'bg-emerald-500/25 text-emerald-100 font-bold border border-emerald-400/40'
+                        : 'text-slate-200 hover:bg-white/10 border border-transparent'
+                    }`}
+                  >
+                    <span>အားလုံး ဖွင့် (temp + wind + streamlines)</span>
+                    <span className="text-[10px] font-mono text-slate-400">
+                      {everythingOn ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
+
+                  {ZIP_FORECAST_FIELDS.map((v) => {
+                    const isTemp = v.id === 'temperature_2m';
+                    const enabled = isTemp ? showTempLayer : showWindLayer;
+                    const isFocus = probeFocusId === v.id;
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() => {
+                          if (isTemp) toggleTempLayer();
+                          else toggleWindLayer();
+                        }}
+                        className={`flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-left text-xs transition cursor-pointer ${
+                          enabled
+                            ? 'bg-white/15 text-white font-semibold'
+                            : 'text-slate-400 hover:bg-white/10 hover:text-white'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          {isTemp ? (
+                            <Thermometer className="h-3.5 w-3.5 shrink-0" style={{ color: v.color }} />
+                          ) : (
+                            <Wind className="h-3.5 w-3.5 shrink-0" style={{ color: v.color }} />
+                          )}
+                          <span className="truncate">{v.labelMm}</span>
+                          {enabled && isFocus && (
+                            <span className="text-[9px] text-emerald-400">focus</span>
+                          )}
+                        </div>
+                        <span className="ml-2 shrink-0 font-mono text-[10px]">
+                          {enabled ? 'ဖွင့်' : 'ပိတ်'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
         <button
-          onClick={() => {
-            setSelectedVariableId('temperature_2m');
-            onLayerChange('temperature');
-          }}
-          className={`flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold transition cursor-pointer shadow-lg backdrop-blur-xl ${
-            selectedVariableId === 'temperature_2m'
-              ? 'bg-amber-500 text-slate-950 shadow-amber-500/20'
-              : 'border border-white/20 bg-black/75 text-slate-300 hover:text-white'
+          type="button"
+          onClick={toggleTempLayer}
+          className={`flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-semibold backdrop-blur-xl transition cursor-pointer ${
+            showTempLayer
+              ? 'border-amber-500/40 bg-amber-500/25 text-amber-200'
+              : 'border-white/20 bg-black/75 text-slate-300 hover:text-white'
           }`}
         >
-          <span>၂ မီတာ အပူချိန် (°C)</span>
+          <Thermometer className="h-3.5 w-3.5" />
+          အပူချိန် {showTempLayer ? 'ဖွင့်' : 'ပိတ်'}
         </button>
 
-        {/* Button 2: 10m Wind Speed */}
         <button
-          onClick={() => {
-            setSelectedVariableId('wind_speed_10m');
-            onLayerChange('wind');
-          }}
-          className={`flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold transition cursor-pointer shadow-lg backdrop-blur-xl ${
-            selectedVariableId.startsWith('wind')
-              ? 'bg-teal-500 text-slate-950 shadow-teal-500/20'
-              : 'border border-white/20 bg-black/75 text-slate-300 hover:text-white'
+          type="button"
+          onClick={toggleWindLayer}
+          className={`flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-semibold backdrop-blur-xl transition cursor-pointer ${
+            showWindLayer
+              ? 'border-teal-500/40 bg-teal-500/25 text-teal-200'
+              : 'border-white/20 bg-black/75 text-slate-300 hover:text-white'
           }`}
         >
           <Wind className="h-3.5 w-3.5" />
-          <span>၁၀ မီတာ လေတိုက်နှုန်း</span>
+          လေ {showWindLayer ? 'ဖွင့်' : 'ပိတ်'}
         </button>
 
-        {/* Button 3: Doppler Satellite Radar */}
         <button
-          onClick={() => {
-            setSelectedVariableId('radar_reflectivity');
-            onLayerChange('radar');
-          }}
-          className={`hidden sm:flex items-center gap-2 rounded-full px-4 py-2 text-xs font-bold transition cursor-pointer shadow-lg backdrop-blur-xl ${
-            selectedVariableId === 'radar_reflectivity'
-              ? 'bg-sky-500 text-slate-950 shadow-sky-500/20'
-              : 'border border-white/20 bg-black/75 text-slate-300 hover:text-white'
+          type="button"
+          onClick={() => (everythingOn ? disableEverything() : enableEverything())}
+          className={`flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-semibold backdrop-blur-xl transition cursor-pointer ${
+            everythingOn
+              ? 'border-emerald-500/50 bg-emerald-500/30 text-emerald-100'
+              : 'border-white/20 bg-black/75 text-slate-300 hover:text-white'
           }`}
+          title="Smooth temp heat + wind streamlines"
         >
-          <Radio className="h-3.5 w-3.5" />
-          <span>ဂြိုဟ်တု ရေဒါ</span>
+          <Layers className="h-3.5 w-3.5" />
+          အားလုံး {everythingOn ? 'ဖွင့်' : 'ပိတ်'}
         </button>
 
-        {/* Button 4: Wind Particles Toggle */}
         <button
+          type="button"
           onClick={onToggleWindParticles}
-          className={`flex items-center gap-1.5 rounded-full border border-white/20 px-3.5 py-2 text-xs font-semibold backdrop-blur-xl transition cursor-pointer ${
+          className={`flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-semibold backdrop-blur-xl transition cursor-pointer ${
             showWindParticles
-              ? 'bg-emerald-500/25 border-emerald-500/40 text-emerald-300'
-              : 'bg-black/75 text-slate-300 hover:text-white'
+              ? 'border-emerald-500/40 bg-emerald-500/25 text-emerald-300'
+              : 'border-white/20 bg-black/75 text-slate-300 hover:text-white'
           }`}
         >
-          <span>
-            {BURMESE_STRINGS.streamlines} {showWindParticles ? 'ဖွင့်' : 'ပိတ်'}
-          </span>
+          <Wind className="h-3.5 w-3.5" />
+          {BURMESE_STRINGS.streamlines} {showWindParticles ? 'ဖွင့်' : 'ပိတ်'}
         </button>
-
-        {/* Button 5: Matplotlib Overlays Toggle */}
-        <button
-          onClick={() => setUseMatplotlibOverlay((v) => !v)}
-          className={`hidden md:flex items-center gap-1.5 rounded-full border border-white/20 px-3.5 py-2 text-xs font-semibold backdrop-blur-xl transition cursor-pointer ${
-            useMatplotlibOverlay
-              ? 'bg-indigo-500/25 border-indigo-500/40 text-indigo-300'
-              : 'bg-black/75 text-slate-300 hover:text-white'
-          }`}
-        >
-          <Palette className="h-3.5 w-3.5 text-indigo-400" />
-          <span>Matplotlib Overlays {useMatplotlibOverlay ? 'ဖွင့်' : 'ပိတ်'}</span>
-        </button>
-
       </div>
 
 
@@ -1113,7 +1018,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
       </div>
 
       {/* Live Probe Hover Inspection Glass */}
-      {probe && (
+      {probe && anyZipLayerOn && (
         <div className="pointer-events-none absolute bottom-24 left-14 z-20 flex items-center gap-4 rounded-2xl border border-white/20 bg-black/85 px-4 py-2.5 text-xs text-white shadow-2xl backdrop-blur-xl">
           <div className="flex flex-col">
             <span className="text-[10px] text-slate-400">တည်နေရာ</span>
@@ -1121,49 +1026,77 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
               {toBurmeseNumber(probe.lat)}°N, {toBurmeseNumber(probe.lon)}°E
             </span>
           </div>
-          <div className="h-6 w-px bg-white/20" />
-          <div className="flex flex-col">
-            <span className="text-[10px] text-slate-400">{currentVarDef.labelMm}</span>
-            <span className="font-mono font-bold" style={{ color: currentVarDef.color }}>
-              {toBurmeseNumber(probe.value)} {currentVarDef.unit}
-            </span>
-          </div>
-          <div className="h-6 w-px bg-white/20" />
-          <div className="flex flex-col">
-            <span className="text-[10px] text-slate-400">လေတိုက်နှုန်း</span>
-            <span className="font-mono font-bold text-emerald-400">
-              {toBurmeseNumber(probe.wind)} km/h
-            </span>
-          </div>
+          {showTempLayer && (
+            <>
+              <div className="h-6 w-px bg-white/20" />
+              <div className="flex flex-col">
+                <span className="text-[10px] text-slate-400">အပူချိန်</span>
+                <span className="font-mono font-bold text-amber-300">
+                  {toBurmeseNumber(probe.temp)} °C
+                </span>
+              </div>
+            </>
+          )}
+          {showWindLayer && (
+            <>
+              <div className="h-6 w-px bg-white/20" />
+              <div className="flex flex-col">
+                <span className="text-[10px] text-slate-400">လေတိုက်နှုန်း</span>
+                <span className="font-mono font-bold text-teal-300">
+                  {toBurmeseNumber(probe.wind)} km/h
+                </span>
+              </div>
+            </>
+          )}
         </div>
       )}
 
-      {/* Color Scale Legend */}
-      <div className="pointer-events-none absolute bottom-24 right-6 z-20 flex flex-col items-end gap-1 rounded-2xl border border-white/20 bg-black/80 p-3 text-[11px] text-slate-300 backdrop-blur-xl shadow-2xl">
-        <div className="font-bold text-white">
-          {currentVarDef.labelMm} ({currentVarDef.unit})
+      {/* Color Scale Legend — for the active smooth heat field */}
+      {anyZipLayerOn && (
+        <div className="pointer-events-none absolute bottom-24 right-6 z-20 flex flex-col items-end gap-2">
+          {(showTempLayer
+            ? ['temperature_2m']
+            : showWindLayer
+              ? ['wind_speed_10m']
+              : []
+          ).map((id) => {
+            const isWind = id.startsWith('wind');
+            const def = WEATHER_VARIABLES_BY_ID[id] || WEATHER_VARIABLES[0];
+            const range = isWind ? WIND_LEGEND_RANGE : TEMPERATURE_LEGEND_RANGE;
+            const gradient = isWind ? WIND_LEGEND_GRADIENT : TEMPERATURE_LEGEND_GRADIENT;
+            return (
+              <div
+                key={id}
+                className="flex flex-col items-end gap-1 rounded-2xl border border-white/20 bg-black/80 p-3 text-[11px] text-slate-300 backdrop-blur-xl shadow-2xl"
+              >
+                <div className="font-bold text-white">
+                  {def.labelMm} ({def.unit})
+                </div>
+                <div className="flex items-center gap-2">
+                  <span>
+                    {toBurmeseNumber(range.min)}
+                    {range.unit}
+                  </span>
+                  <div
+                    className="h-2.5 w-36 rounded-full shadow-inner"
+                    style={{ background: gradient }}
+                  />
+                  <span>
+                    {toBurmeseNumber(range.max)}
+                    {isWind ? '+' : ''}
+                    {range.unit}
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {bothZipLayersOn
+                    ? 'smooth heat + wind streamlines'
+                    : 'smooth interpolated heat'}
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <div className="flex items-center gap-2">
-          <span>
-            {toBurmeseNumber(currentVarDef.min)}
-            {currentVarDef.unit}
-          </span>
-          <div
-            className="h-2.5 w-36 rounded-full shadow-inner"
-            style={{
-              background: selectedVariableId.startsWith('wind')
-                ? 'linear-gradient(to right, rgb(56, 189, 248), rgb(52, 211, 153), rgb(245, 158, 11), rgb(244, 63, 94))'
-                : selectedVariableId.startsWith('temperature')
-                ? 'linear-gradient(to right, rgb(56, 189, 248), rgb(251, 191, 36), rgb(245, 158, 11), rgb(239, 68, 68))'
-                : 'linear-gradient(to right, rgb(56, 189, 248), rgb(34, 197, 94), rgb(245, 158, 11), rgb(239, 68, 68))',
-            }}
-          />
-          <span>
-            {toBurmeseNumber(currentVarDef.max)}
-            {currentVarDef.unit}
-          </span>
-        </div>
-      </div>
+      )}
     </div>
   );
 };

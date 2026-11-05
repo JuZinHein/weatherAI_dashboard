@@ -1,4 +1,5 @@
 import express from 'express';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -37,7 +38,10 @@ async function startZarrSidecar() {
     return;
   }
   const script = path.resolve(__dirname, 'backend', 'zarr_field_server.py');
-  const py = process.env.PYTHON || 'python';
+  const venvPython = process.platform === 'win32'
+    ? path.resolve(__dirname, '.venv', 'Scripts', 'python.exe')
+    : path.resolve(__dirname, '.venv', 'bin', 'python');
+  const py = process.env.PYTHON || (existsSync(venvPython) ? venvPython : 'python');
   console.log(`[zarr-api] Starting ${py} ${script} on :${ZARR_API_PORT}`);
   zarrChild = spawn(py, [script], {
     cwd: __dirname,

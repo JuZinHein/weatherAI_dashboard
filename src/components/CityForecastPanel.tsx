@@ -1,13 +1,15 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { CityInfo, ForecastDataset } from '../types/forecast';
+import React, { useState, useMemo, useEffect } from 'react';
+import { CityInfo } from '../types/forecast';
+import { WEATHER_VARIABLES_BY_ID } from '../services/weatherVariables';
 import {
-  WEATHER_VARIABLES,
-  WEATHER_VARIABLES_BY_ID,
-  LEGACY_METRIC_TO_ZARR,
-} from '../services/weatherVariables';
-import { ZARR_VAR_LABELS_MM, fetchZarrTimeseries } from '../services/zarrApi';
+  ZARR_VAR_LABELS_MM,
+  fetchZarrMeta,
+  fetchZarrTimeseries,
+  type ZarrMeta,
+} from '../services/zarrApi';
 import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from '../utils/burmese';
 import { getStepTimeWindow } from '../utils/forecastTime';
+import { MYANMAR_CITIES } from '../data/myanmarCities';
 import {
   MapPin,
   ArrowUpDown,
@@ -16,22 +18,18 @@ import {
 } from 'lucide-react';
 
 interface CityForecastPanelProps {
-  dataset: ForecastDataset;
+  modelId: string;
   selectedCity: CityInfo;
   onSelectCity: (city: CityInfo) => void;
   currentStepIndex: number;
   onSelectStepIndex: (index: number) => void;
 }
 
-type SortField = 'name' | 'primary' | 'temperature' | 'wind';
+type SortField = 'name' | 'primary' | 'secondary';
 type SortOrder = 'desc' | 'asc';
 
-function resolveVarId(id: string): string {
-  return LEGACY_METRIC_TO_ZARR[id] || id;
-}
-
 export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
-  dataset,
+  modelId,
   selectedCity,
   onSelectCity,
   currentStepIndex,
@@ -42,90 +40,138 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortField, setSortField] = useState<SortField>('primary');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
-  /** cityName → values[leadIndex] from forecast.zarr */
+  const [meta, setMeta] = useState<ZarrMeta | null>(null);
   const [primarySeriesByCity, setPrimarySeriesByCity] = useState<Record<string, number[]>>({});
   const [secondarySeriesByCity, setSecondarySeriesByCity] = useState<Record<string, number[]>>({});
-  const [zarrStatus, setZarrStatus] = useState<'loading' | 'ready' | 'fallback'>('loading');
-  const abortRef = useRef<AbortController | null>(null);
+  const [zarrStatus, setZarrStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [loadError, setLoadError] = useState('');
+  const [metaError, setMetaError] = useState('');
 
-  const primaryVar = WEATHER_VARIABLES_BY_ID[resolveVarId(primaryVarId)] || WEATHER_VARIABLES[0];
-  const secondaryVar = WEATHER_VARIABLES_BY_ID[resolveVarId(secondaryVarId)] || WEATHER_VARIABLES[7];
+  const availableVariables = useMemo(
+    () => (meta?.available_variables ?? [])
+      .map((id) => WEATHER_VARIABLES_BY_ID[id])
+      .filter((variable) => variable != null),
+    [meta]
+  );
+  const primaryVar = WEATHER_VARIABLES_BY_ID[primaryVarId] || availableVariables[0] || WEATHER_VARIABLES_BY_ID.t2m;
+  const secondaryVar = WEATHER_VARIABLES_BY_ID[secondaryVarId] || availableVariables[1] || primaryVar;
 
   const cityPoints = useMemo(
-    () =>
-      dataset.cityForecasts.map((c) => ({
-        name: c.name,
-        lat: c.lat,
-        lon: c.lon,
-      })),
-    [dataset.cityForecasts]
+    () => {
+      if (!meta) return [];
+      const [minLat, maxLat] = meta.lat_range;
+      const [minLon, maxLon] = meta.lon_range;
+      return MYANMAR_CITIES.filter((city) => {
+        const lon = minLon >= 0 && maxLon > 180 && city.lon < 0
+          ? city.lon + 360
+          : city.lon;
+        return city.lat >= minLat && city.lat <= maxLat && lon >= minLon && lon <= maxLon;
+      });
+    },
+    [meta]
   );
 
   useEffect(() => {
-    if (!cityPoints.length) return;
-    if (abortRef.current) abortRef.current.abort();
     const ac = new AbortController();
-    abortRef.current = ac;
     setZarrStatus('loading');
+    setMetaError('');
+    setLoadError('');
+    fetchZarrMeta(modelId, ac.signal)
+      .then((result) => {
+        if (ac.signal.aborted) return;
+        const variables = result.available_variables
+          .filter((id) => WEATHER_VARIABLES_BY_ID[id]);
+        if (!variables.length) {
+          setMetaError('This model has no supported forecast variables.');
+          setZarrStatus('error');
+          return;
+        }
+        setMeta(result);
+        setPrimaryVarId(variables.includes('t2m') ? 't2m' : variables[0]);
+        setSecondaryVarId(variables.includes('wind10m')
+          ? 'wind10m'
+          : variables.find((id) => id !== (variables.includes('t2m') ? 't2m' : variables[0])) ?? variables[0]);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name === 'AbortError') return;
+        setMetaError(err instanceof Error ? err.message : String(err));
+        setZarrStatus('error');
+      });
+    return () => ac.abort();
+  }, [modelId]);
 
-    const pId = resolveVarId(primaryVarId);
-    const sId = resolveVarId(secondaryVarId);
+  useEffect(() => {
+    if (!meta || meta.model !== modelId || !cityPoints.length) {
+      if (meta) {
+        if (meta.model === modelId && !cityPoints.length) {
+          setLoadError('This model does not cover any listed Myanmar cities.');
+          setZarrStatus('error');
+        }
+      }
+      return;
+    }
 
-    Promise.all([
-      fetchZarrTimeseries({ variable: pId, points: cityPoints, signal: ac.signal }),
-      pId === sId
-        ? Promise.resolve(null)
-        : fetchZarrTimeseries({ variable: sId, points: cityPoints, signal: ac.signal }),
-    ])
+    const ac = new AbortController();
+    setZarrStatus('loading');
+    setLoadError('');
+    const primaryRequest = fetchZarrTimeseries({
+      modelId,
+      variable: primaryVarId,
+      points: cityPoints,
+      signal: ac.signal,
+    });
+    const secondaryRequest = primaryVarId === secondaryVarId
+      ? primaryRequest
+      : fetchZarrTimeseries({
+              modelId,
+              variable: secondaryVarId,
+              points: cityPoints,
+              signal: ac.signal,
+            });
+    Promise.all([primaryRequest, secondaryRequest])
       .then(([primary, secondary]) => {
         if (ac.signal.aborted) return;
         setPrimarySeriesByCity(primary.series);
-        setSecondarySeriesByCity(secondary?.series ?? primary.series);
+        setSecondarySeriesByCity(secondary.series);
         setZarrStatus('ready');
       })
-      .catch((err) => {
-        if (err?.name === 'AbortError') return;
-        console.warn('zarr city timeseries failed — using bundled zip metrics', err);
-        setPrimarySeriesByCity({});
-        setSecondarySeriesByCity({});
-        setZarrStatus('fallback');
+      .catch((err: unknown) => {
+        if (err instanceof Error && err.name === 'AbortError') return;
+        setLoadError(err instanceof Error ? err.message : String(err));
+        setZarrStatus('error');
       });
-
     return () => ac.abort();
-  }, [cityPoints, primaryVarId, secondaryVarId]);
+  }, [cityPoints, meta, modelId, primaryVarId, secondaryVarId]);
 
-  const getCityStepMetric = (city: CityInfo, stepIdx: number, varId: string): number => {
-    const zarrId = resolveVarId(varId);
-    const fromZarr =
-      zarrId === resolveVarId(primaryVarId)
-        ? primarySeriesByCity[city.name]
-        : zarrId === resolveVarId(secondaryVarId)
-          ? secondarySeriesByCity[city.name]
-          : undefined;
-    if (fromZarr && fromZarr[stepIdx] != null && Number.isFinite(fromZarr[stepIdx])) {
-      return fromZarr[stepIdx];
-    }
+  const leadHours = meta?.lead_hours ?? [];
+  const validTimesUtc = useMemo(() => {
+    if (!meta?.initialization_utc) return [];
+    const init = new Date(meta.initialization_utc);
+    if (Number.isNaN(init.getTime())) return [];
+    return leadHours.map((hour) =>
+      new Date(init.getTime() + hour * 3600_000).toISOString()
+    );
+  }, [leadHours, meta?.initialization_utc]);
+  const activeCity = cityPoints.find((city) => city.name === selectedCity.name)
+    ?? cityPoints[0];
 
-    // Bundled zip / CSV fallback (legacy metric keys)
-    const f = city.forecasts?.[stepIdx] || city.forecasts?.[0];
-    if (f?.metrics && f.metrics[varId] !== undefined) return f.metrics[varId];
-    if (f?.metrics && f.metrics[zarrId] !== undefined) return f.metrics[zarrId];
-    if (zarrId === 't2m' || varId === 'temperature_2m') return f?.temperatureC ?? 0;
-    if (zarrId === 'wind10m' || varId === 'wind_speed_10m') {
-      // zip stored km/h; zarr uses m/s — only hit this path in fallback
-      return f?.windKmh ?? 0;
-    }
-    return 0;
+  const getCityStepMetric = (
+    cityName: string,
+    stepIdx: number,
+    seriesByCity: Record<string, number[]>
+  ): number | null => {
+    const value = seriesByCity[cityName]?.[stepIdx];
+    return value != null && Number.isFinite(value) ? value : null;
   };
 
   const sortedCities = useMemo(() => {
-    return [...dataset.cityForecasts]
+    return cityPoints
       .filter((c) => {
         if (!searchQuery.trim()) return true;
         const q = searchQuery.toLowerCase();
-        const mm = (c.mmName || BURMESE_CITIES_MAP[c.name]?.mmName || '').toLowerCase();
+        const mm = (BURMESE_CITIES_MAP[c.name]?.mmName || '').toLowerCase();
         const en = c.name.toLowerCase();
-        const region = (BURMESE_CITIES_MAP[c.name]?.region || c.state).toLowerCase();
+        const region = (BURMESE_CITIES_MAP[c.name]?.region || '').toLowerCase();
         return en.includes(q) || mm.includes(q) || region.includes(q);
       })
       .sort((a, b) => {
@@ -135,23 +181,15 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
             : b.name.localeCompare(a.name);
         }
 
-        let valA = 0;
-        let valB = 0;
-        if (sortField === 'primary') {
-          valA = getCityStepMetric(a, currentStepIndex, primaryVarId);
-          valB = getCityStepMetric(b, currentStepIndex, primaryVarId);
-        } else if (sortField === 'temperature') {
-          valA = getCityStepMetric(a, currentStepIndex, 't2m');
-          valB = getCityStepMetric(b, currentStepIndex, 't2m');
-        } else {
-          valA = getCityStepMetric(a, currentStepIndex, 'wind10m');
-          valB = getCityStepMetric(b, currentStepIndex, 'wind10m');
-        }
-
+        const series = sortField === 'primary' ? primarySeriesByCity : secondarySeriesByCity;
+        const valA = getCityStepMetric(a.name, currentStepIndex, series);
+        const valB = getCityStepMetric(b.name, currentStepIndex, series);
+        if (valA == null) return 1;
+        if (valB == null) return -1;
         return sortOrder === 'desc' ? valB - valA : valA - valB;
       });
   }, [
-    dataset.cityForecasts,
+    cityPoints,
     searchQuery,
     sortField,
     sortOrder,
@@ -162,24 +200,34 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
     secondarySeriesByCity,
   ]);
 
-  const mmCityName = selectedCity.mmName || BURMESE_CITIES_MAP[selectedCity.name]?.mmName || selectedCity.name;
-  const numSteps = Math.max(
-    dataset.leadHours.length || 0,
-    primarySeriesByCity[selectedCity.name]?.length || 0,
-    6
-  );
+  const mmCityName = activeCity?.mmName || BURMESE_CITIES_MAP[activeCity?.name ?? '']?.mmName || activeCity?.name || '';
+  const numSteps = leadHours.length;
 
   const primarySeries = useMemo(() => {
-    const fromZarr = primarySeriesByCity[selectedCity.name];
-    if (fromZarr?.length) return fromZarr;
-    return dataset.leadHours.map((_, i) => getCityStepMetric(selectedCity, i, primaryVarId));
-  }, [selectedCity, primaryVarId, dataset.leadHours, primarySeriesByCity]);
+    return activeCity ? primarySeriesByCity[activeCity.name] ?? [] : [];
+  }, [activeCity, primarySeriesByCity]);
 
   const secondarySeries = useMemo(() => {
-    const fromZarr = secondarySeriesByCity[selectedCity.name];
-    if (fromZarr?.length) return fromZarr;
-    return dataset.leadHours.map((_, i) => getCityStepMetric(selectedCity, i, secondaryVarId));
-  }, [selectedCity, secondaryVarId, dataset.leadHours, secondarySeriesByCity]);
+    return activeCity ? secondarySeriesByCity[activeCity.name] ?? [] : [];
+  }, [activeCity, secondarySeriesByCity]);
+
+  if (!meta && zarrStatus === 'loading') {
+    return (
+      <div className="flex h-full w-full items-center justify-center px-6 pt-20 text-sm text-slate-300">
+        Loading {modelId} Zarr forecast…
+      </div>
+    );
+  }
+  if (!meta && zarrStatus === 'error') {
+    return (
+      <div className="flex h-full w-full items-center justify-center px-6 pt-20">
+        <div className="max-w-lg rounded-2xl border border-amber-400/25 bg-black/60 p-6 text-center">
+          <h2 className="text-sm font-semibold text-amber-200">No Zarr city forecast available</h2>
+          <p className="mt-2 text-xs text-slate-300">{metaError || loadError}</p>
+        </div>
+      </div>
+    );
+  }
 
   const chartW = 740;
   const chartH = 260;
@@ -200,28 +248,45 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
   const getSecondaryY = (v: number) => pad.top + innerH - ((v - minS) / sRange) * innerH;
 
   const primaryPath = primarySeries
-    .map((v, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getPrimaryY(v)}`)
+    .map((v, i) => Number.isFinite(v) ? `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getPrimaryY(v)}` : '')
+    .filter(Boolean)
     .join(' ');
 
   const secondaryPath = secondarySeries
-    .map((v, i) => `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getSecondaryY(v)}`)
+    .map((v, i) => Number.isFinite(v) ? `${i === 0 ? 'M' : 'L'} ${getX(i)} ${getSecondaryY(v)}` : '')
+    .filter(Boolean)
     .join(' ');
 
-  const curPrimaryVal = primarySeries[currentStepIndex] ?? primarySeries[0];
-  const curSecondaryVal = secondarySeries[currentStepIndex] ?? secondarySeries[0];
+  const safeStepIndex = Math.min(currentStepIndex, Math.max(0, leadHours.length - 1));
+  const curPrimaryVal = primarySeries[safeStepIndex];
+  const curSecondaryVal = secondarySeries[safeStepIndex];
+  const formatValue = (value: number | null | undefined) =>
+    value == null || !Number.isFinite(value) ? '—' : toBurmeseNumber(value.toFixed(1));
 
   return (
-    <div className="h-full w-full overflow-y-auto p-4 sm:p-6 pt-36 sm:pt-40 pb-32 text-white">
+    <div
+      className="h-full w-full overflow-y-auto p-4 sm:p-6 pt-36 sm:pt-40 pb-32 text-white transition-opacity duration-200"
+      aria-busy={zarrStatus === 'loading'}
+    >
       <div className="mx-auto max-w-7xl flex flex-col gap-6">
+
+        {zarrStatus === 'loading' && (
+          <div role="status" className="fixed right-4 top-20 z-20 rounded-full border border-emerald-400/25 bg-slate-950/85 px-3 py-1.5 text-[11px] text-emerald-200 shadow-lg backdrop-blur-xl">
+            Updating {modelId} Zarr forecast…
+          </div>
+        )}
+        {zarrStatus === 'error' && (
+          <div role="alert" className="rounded-xl border border-amber-400/25 bg-amber-950/40 px-4 py-2 text-xs text-amber-100">
+            {metaError || loadError}
+          </div>
+        )}
 
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
             forecast.zarr · မြို့ကြီးများ ခန့်မှန်းချက်
           </span>
           <span className="text-xs font-mono text-emerald-400">
-            {zarrStatus === 'ready' && `${WEATHER_VARIABLES.length} မျိုး · zarr live`}
-            {zarrStatus === 'loading' && 'zarr ဖတ်နေသည်…'}
-            {zarrStatus === 'fallback' && 'zip fallback (t2m / wind)'}
+            {`${availableVariables.length} မျိုး · ${meta?.model ?? modelId} Zarr`}
           </span>
         </div>
 
@@ -266,12 +331,12 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                 {ZARR_VAR_LABELS_MM[primaryVar.id] || primaryVar.labelMm}
               </button>
               <button
-                onClick={() => setSortField('wind')}
+                onClick={() => setSortField('secondary')}
                 className={`rounded-lg px-2.5 py-1 whitespace-nowrap transition cursor-pointer ${
-                  sortField === 'wind' ? 'bg-teal-500/30 text-teal-300 font-semibold border border-teal-500/40' : 'text-slate-400 hover:text-white'
+                  sortField === 'secondary' ? 'bg-teal-500/30 text-teal-300 font-semibold border border-teal-500/40' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                {ZARR_VAR_LABELS_MM.wind10m}
+                {ZARR_VAR_LABELS_MM[secondaryVar.id] || secondaryVar.labelMm}
               </button>
               <button
                 onClick={() => setSortField('name')}
@@ -285,11 +350,11 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
 
             <div className="flex max-h-[460px] flex-col gap-2 overflow-y-auto pr-1">
               {sortedCities.map((city) => {
-                const isSelected = city.name === selectedCity.name;
+                const isSelected = city.name === activeCity?.name;
                 const mmName = city.mmName || BURMESE_CITIES_MAP[city.name]?.mmName || city.name;
                 const region = BURMESE_CITIES_MAP[city.name]?.region || city.state;
-                const pVal = getCityStepMetric(city, currentStepIndex, primaryVarId);
-                const sVal = getCityStepMetric(city, currentStepIndex, secondaryVarId);
+                const pVal = getCityStepMetric(city.name, safeStepIndex, primarySeriesByCity);
+                const sVal = getCityStepMetric(city.name, safeStepIndex, secondarySeriesByCity);
 
                 return (
                   <button
@@ -314,10 +379,10 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                     </div>
                     <div className="text-right">
                       <div className="font-mono font-bold text-xs" style={{ color: primaryVar.color }}>
-                        {toBurmeseNumber(pVal)} {primaryVar.unit}
+                        {formatValue(pVal)} {primaryVar.unit}
                       </div>
                       <div className="font-mono text-[10px]" style={{ color: secondaryVar.color }}>
-                        {toBurmeseNumber(sVal)} {secondaryVar.unit}
+                        {formatValue(sVal)} {secondaryVar.unit}
                       </div>
                     </div>
                   </button>
@@ -334,14 +399,10 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                 {ZARR_VAR_LABELS_MM[secondaryVar.id] || secondaryVar.labelMm}
               </h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                {selectedCity.state} · တည်နေရာ: {toBurmeseNumber(selectedCity.lat)}°N, {toBurmeseNumber(selectedCity.lon)}°E · ပင်လယ်ရေမျက်နှာပြင်: {selectedCity.elevation}
+                {activeCity?.state} · တည်နေရာ: {activeCity ? toBurmeseNumber(activeCity.lat) : '—'}°N, {activeCity ? toBurmeseNumber(activeCity.lon) : '—'}°E · ပင်လယ်ရေမျက်နှာပြင်: {activeCity?.elevation ?? '—'}
               </p>
               <p className="text-[11px] text-emerald-400/90 mt-1">
-                {zarrStatus === 'ready'
-                  ? 'forecast.zarr မှ မြို့ lat/lon နမူနာ (ensemble mean)'
-                  : zarrStatus === 'loading'
-                    ? 'forecast.zarr ဖတ်နေသည်…'
-                    : 'zip / bundled forecast fallback'}
+                {`${meta?.model_label ?? modelId} Zarr မှ မြို့ lat/lon နမူနာ (ensemble mean)`}
               </p>
             </div>
 
@@ -360,7 +421,7 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                     onChange={(e) => setPrimaryVarId(e.target.value)}
                     className="w-full appearance-none rounded-lg border border-white/20 bg-black/80 px-3 py-2 pr-8 text-xs text-white focus:border-emerald-500 focus:outline-none cursor-pointer"
                   >
-                    {WEATHER_VARIABLES.map((v) => (
+                    {availableVariables.map((v) => (
                       <option key={v.id} value={v.id} className="bg-slate-900 text-white">
                         {ZARR_VAR_LABELS_MM[v.id] || v.labelMm} ({v.labelEn}) — {v.unit}
                       </option>
@@ -384,7 +445,7 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                     onChange={(e) => setSecondaryVarId(e.target.value)}
                     className="w-full appearance-none rounded-lg border border-white/20 bg-black/80 px-3 py-2 pr-8 text-xs text-white focus:border-emerald-500 focus:outline-none cursor-pointer"
                   >
-                    {WEATHER_VARIABLES.map((v) => (
+                    {availableVariables.map((v) => (
                       <option key={v.id} value={v.id} className="bg-slate-900 text-white">
                         {ZARR_VAR_LABELS_MM[v.id] || v.labelMm} ({v.labelEn}) — {v.unit}
                       </option>
@@ -452,13 +513,13 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                   strokeLinejoin="round"
                 />
 
-                {dataset.leadHours.map((hour, i) => {
+                {leadHours.map((hour, i) => {
                   const cx = getX(i);
                   const pVal = primarySeries[i];
                   const sVal = secondarySeries[i];
                   const cyP = getPrimaryY(pVal);
                   const cyS = getSecondaryY(sVal);
-                  const isCurrent = i === currentStepIndex;
+                  const isCurrent = i === safeStepIndex;
 
                   return (
                     <g key={i}>
@@ -483,8 +544,8 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                           }`}
                         >
                           {(numSteps <= 8
-                            ? getStepTimeWindow(dataset.validTimesUtc, i)?.shortLabel
-                            : getStepTimeWindow(dataset.validTimesUtc, i)?.dateLabel) ?? `${hour}h`}
+                            ? getStepTimeWindow(validTimesUtc, i)?.shortLabel
+                            : getStepTimeWindow(validTimesUtc, i)?.dateLabel) ?? `${hour}h`}
                         </text>
                       )}
                       <circle
@@ -518,19 +579,19 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
               <div className="rounded-xl border border-white/10 bg-white/5 p-2.5">
                 <span className="text-[10px] text-slate-400 block line-clamp-1">{primaryVar.labelMm}</span>
                 <span className="font-mono text-base font-black" style={{ color: primaryVar.color }}>
-                  {toBurmeseNumber(curPrimaryVal)} {primaryVar.unit}
+                  {formatValue(curPrimaryVal)} {primaryVar.unit}
                 </span>
               </div>
               <div className="rounded-xl border border-white/10 bg-white/5 p-2.5">
                 <span className="text-[10px] text-slate-400 block line-clamp-1">{secondaryVar.labelMm}</span>
                 <span className="font-mono text-base font-black" style={{ color: secondaryVar.color }}>
-                  {toBurmeseNumber(curSecondaryVal)} {secondaryVar.unit}
+                  {formatValue(curSecondaryVal)} {secondaryVar.unit}
                 </span>
               </div>
               <div className="rounded-xl border border-white/10 bg-white/5 p-2.5">
                 <span className="text-[10px] text-slate-400 block">ခန့်မှန်းချိန်ကာလ</span>
                 <span className="font-mono text-[11px] font-bold text-emerald-400 block mt-0.5 leading-snug">
-                  {getStepTimeWindow(dataset.validTimesUtc, currentStepIndex)?.label ?? '—'}
+                  {getStepTimeWindow(validTimesUtc, safeStepIndex)?.label ?? '—'}
                 </span>
               </div>
             </div>
@@ -541,14 +602,14 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
             <div>
               <h4 className="font-display text-sm font-bold text-white">
-                {mmCityName} · {toBurmeseNumber(dataset.leadHours[dataset.leadHours.length - 1] ?? 0)} နာရီ ခန့်မှန်းချက် ဇယား
+                {mmCityName} · {toBurmeseNumber(leadHours[leadHours.length - 1] ?? 0)} နာရီ ခန့်မှန်းချက် ဇယား
               </h4>
               <p className="text-xs text-slate-400">
-                Zip ထဲမှ ၂ မီတာ အပူချိန် နှင့် ၁၀ မီတာ လေတိုက်နှုန်းသာ
+                {meta?.model_label ?? modelId} Zarr · ရွေးချယ်ထားသော variable များ
               </p>
             </div>
             <span className="text-xs text-emerald-400 font-mono">
-              Local FCN · offline
+              Zarr · ensemble mean
             </span>
           </div>
 
@@ -557,17 +618,17 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
               <thead>
                 <tr className="border-b border-white/10 text-slate-400 font-medium">
                   <th className="py-2.5 px-3">အချိန်အဆင့်</th>
-                  {WEATHER_VARIABLES.map((v) => (
-                    <th key={v.id} className="py-2.5 px-3 whitespace-nowrap font-medium" style={{ color: v.color }}>
+                  {[primaryVar, secondaryVar].map((v, index) => (
+                    <th key={`${v.id}-${index}`} className="py-2.5 px-3 whitespace-nowrap font-medium" style={{ color: v.color }}>
                       {v.labelMm} ({v.unit})
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5 font-mono">
-                {dataset.leadHours.map((hour, i) => {
-                  const isCurrent = i === currentStepIndex;
-                  const win = getStepTimeWindow(dataset.validTimesUtc, i);
+                {leadHours.map((hour, i) => {
+                  const isCurrent = i === safeStepIndex;
+                  const win = getStepTimeWindow(validTimesUtc, i);
 
                   return (
                     <tr
@@ -583,12 +644,13 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                           <span className="font-mono text-[11px]">{win?.label ?? `+${hour}h`}</span>
                         </div>
                       </td>
-                      {WEATHER_VARIABLES.map((v) => {
-                        const val = getCityStepMetric(selectedCity, i, v.id);
+                      {[primaryVar, secondaryVar].map((v, index) => {
+                        const series = index === 0 ? primarySeriesByCity : secondarySeriesByCity;
+                        const val = getCityStepMetric(activeCity?.name ?? '', i, series);
                         return (
-                          <td key={v.id} className="py-2.5 px-3 whitespace-nowrap">
+                          <td key={`${v.id}-${index}`} className="py-2.5 px-3 whitespace-nowrap">
                             <span className="font-bold" style={{ color: v.color }}>
-                              {toBurmeseNumber(val)}
+                              {formatValue(val)}
                             </span>
                             <span className="text-[10px] text-slate-400 ml-1">{v.unit}</span>
                           </td>

@@ -7,6 +7,9 @@ earth2studio>=0.20.0
 # Step 2: NVIDIA NIM API / tensor manipulation
 requests>=2.31.0
 numpy>=1.24.0
+zarr>=3.0.0
+fastapi>=0.110.0
+uvicorn>=0.27.0
 torch>=2.1.0
 
 # Step 4: Asset generation (RdYlBu_r and viridis colormaps)

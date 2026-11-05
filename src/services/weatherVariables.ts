@@ -71,6 +71,18 @@ export interface WeatherVariableDef {
 /** All Earth-2 variables available from local forecast.zarr */
 export const WEATHER_VARIABLES: WeatherVariableDef[] = [
   {
+    id: 't1000',
+    categoryId: 'temperature',
+    labelEn: 'Temperature 1000 hPa',
+    labelMm: ZARR_VAR_LABELS_MM.t1000,
+    unit: '°C',
+    min: -40,
+    max: 45,
+    color: '#f97316',
+    descriptionEn: 'Air temperature at 1000 hPa',
+    descriptionMm: ZARR_VAR_LABELS_MM.t1000,
+  },
+  {
     id: 't2m',
     categoryId: 'temperature',
     labelEn: 'Temperature 2 m',

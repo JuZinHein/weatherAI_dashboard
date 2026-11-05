@@ -24,6 +24,28 @@ export type ZarrMeta = {
   lon_range: number[];
 };
 
+export type ZarrModel = {
+  id: string;
+  label: string;
+  short: string;
+  source_relative: string;
+  available: boolean;
+  has_ensemble: boolean;
+  default_region: string;
+};
+
+export async function fetchZarrModels(signal?: AbortSignal): Promise<{
+  default: string;
+  models: ZarrModel[];
+}> {
+  const res = await fetch('/api/zarr/models', { signal });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`zarr models ${res.status}: ${body.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
 export type ZarrFieldPart = {
   id: string;
   geo_extent: { west: number; east: number; north: number; south: number };
@@ -59,6 +81,7 @@ export type ZarrField = {
  */
 export const ZARR_VAR_LABELS_MM: Record<string, string> = {
   t2m: 'မြေပြင်အထက် ၂ မီတာ အပူချိန်',
+  t1000: '၁၀၀၀ hPa အပူချိန်',
   t500: '၅၀၀ hPa အပူချိန်',
   msl: 'ပင်လယ်ရေမျက်နှာပြင် လေဖိအား',
   q850: '၈၅၀ hPa သီးခြားစိုထိုင်းဆ',
@@ -71,8 +94,9 @@ export const ZARR_VAR_LABELS_MM: Record<string, string> = {
   z500: '၅၀၀ hPa လေထုဖိအားအမြင့်',
 };
 
-export async function fetchZarrMeta(signal?: AbortSignal): Promise<ZarrMeta> {
-  const res = await fetch('/api/zarr/meta?model=earth2', { signal });
+export async function fetchZarrMeta(modelId = 'earth2', signal?: AbortSignal): Promise<ZarrMeta> {
+  const params = new URLSearchParams({ model: modelId });
+  const res = await fetch(`/api/zarr/meta?${params}`, { signal });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`zarr meta ${res.status}: ${body.slice(0, 200)}`);
@@ -81,6 +105,7 @@ export async function fetchZarrMeta(signal?: AbortSignal): Promise<ZarrMeta> {
 }
 
 export async function fetchZarrField(opts: {
+  modelId?: string;
   variable: string;
   leadHour: number;
   ensemble?: string;
@@ -88,7 +113,7 @@ export async function fetchZarrField(opts: {
   signal?: AbortSignal;
 }): Promise<ZarrField> {
   const params = new URLSearchParams({
-    model: 'earth2',
+    model: opts.modelId ?? 'earth2',
     variable: opts.variable,
     region: 'global',
     lead_hour: String(opts.leadHour),
@@ -120,6 +145,7 @@ export type ZarrTimeseries = {
 
 /** City point timeseries for one variable across all lead hours */
 export async function fetchZarrTimeseries(opts: {
+  modelId?: string;
   variable: string;
   points: { name: string; lat: number; lon: number }[];
   ensemble?: string;
@@ -129,7 +155,7 @@ export async function fetchZarrTimeseries(opts: {
     .map((p) => `${p.name}:${p.lat}:${p.lon}`)
     .join(';');
   const params = new URLSearchParams({
-    model: 'earth2',
+    model: opts.modelId ?? 'earth2',
     variable: opts.variable,
     ensemble: opts.ensemble ?? 'mean',
     points,

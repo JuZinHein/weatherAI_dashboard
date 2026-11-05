@@ -7,7 +7,6 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ForecastDataset, ViewMode, MapLayer, CityInfo } from './types/forecast';
 import { loadCurrentDataset, loadLargeDataset, saveCustomDataset, clearCustomDataset, DEFAULT_FORECAST_DATA } from './data/defaultForecast';
 import { ShowcaseHeader } from './components/ShowcaseHeader';
-import { OverviewStrip } from './components/OverviewStrip';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ForecastMap2D } from './components/ForecastMap2D';
 import { SatelliteGlobe3D } from './components/SatelliteGlobe3D';
@@ -18,16 +17,19 @@ import { ModelInfoModal } from './components/ModelInfoModal';
 import { BURMESE_STRINGS } from './utils/burmese';
 import { getStepTimeWindow } from './utils/forecastTime';
 import { Layers } from 'lucide-react';
-import type { ZarrMeta } from './services/zarrApi';
+import { fetchZarrMeta, fetchZarrModels, type ZarrMeta, type ZarrModel } from './services/zarrApi';
 import { MYANMAR_CITIES } from './data/myanmarCities';
 
 export default function App() {
   // Prefer bundled zarr-converted forecast over older localStorage uploads
   const [dataset, setDataset] = useState<ForecastDataset>(() => DEFAULT_FORECAST_DATA);
-  // Default to Myanmar regional satellite-radar 2D map
-  const [viewMode, setViewMode] = useState<ViewMode>('satellite_radar');
+  // Open on the 3D globe; the radar map remains available from the view switcher.
+  const [viewMode, setViewMode] = useState<ViewMode>('globe_3d');
+  const [hasVisitedCityTrends, setHasVisitedCityTrends] = useState(false);
   const [activeLayer, setActiveLayer] = useState<MapLayer>('temperature');
   const [showWindParticles, setShowWindParticles] = useState<boolean>(true);
+  const [models, setModels] = useState<ZarrModel[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState('earth2');
 
   // Active timestep index
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
@@ -37,7 +39,7 @@ export default function App() {
   const [autoLoop, setAutoLoop] = useState<boolean>(true);
   const ignoreStoredLoad = useRef(false);
 
-  // Prefer bundled city forecasts (OverviewStrip/trends); pins still use MYANMAR_CITIES coords
+  // City names and coordinates are geography; city-trends forecast values come from the selected Zarr model.
   const [selectedCity, setSelectedCity] = useState<CityInfo>(
     () => DEFAULT_FORECAST_DATA.cityForecasts[0] || MYANMAR_CITIES[0]
   );
@@ -45,6 +47,27 @@ export default function App() {
   const [isUploadOpen, setIsUploadOpen] = useState<boolean>(false);
   const [isModelInfoOpen, setIsModelInfoOpen] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (viewMode === 'city_trends') setHasVisitedCityTrends(true);
+  }, [viewMode]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchZarrModels(controller.signal)
+      .then(({ default: defaultModel, models: discovered }) => {
+        setModels(discovered);
+        const preferred = discovered.find((model) => model.id === defaultModel && model.available)
+          ?? discovered.find((model) => model.available);
+        if (preferred) setSelectedModelId(preferred.id);
+      })
+      .catch((err: unknown) => {
+        if ((err as { name?: string })?.name !== 'AbortError') {
+          console.error('Failed to load local forecast models', err);
+        }
+      });
+    return () => controller.abort();
+  }, []);
 
   // Sync fullscreen change listener
   useEffect(() => {
@@ -248,12 +271,15 @@ export default function App() {
       const sameLeads =
         prev.leadHours.length === meta.lead_hours.length &&
         prev.leadHours.every((h, i) => h === meta.lead_hours[i]);
-      if (sameLeads) return prev;
       return {
         ...prev,
-        leadHours: meta.lead_hours,
+        ...(sameLeads
+          ? {}
+          : {
+              leadHours: meta.lead_hours,
+              isFuture: meta.lead_hours.map(() => true),
+            }),
         validTimesUtc,
-        isFuture: meta.lead_hours.map(() => true),
         metadata: {
           ...prev.metadata,
           model: meta.model_label || prev.metadata.model,
@@ -264,6 +290,19 @@ export default function App() {
       };
     });
   }, []);
+
+  useEffect(() => {
+    if (!models.some((model) => model.id === selectedModelId && model.available)) return;
+    const controller = new AbortController();
+    fetchZarrMeta(selectedModelId, controller.signal)
+      .then(handleZarrMeta)
+      .catch((err: unknown) => {
+        if ((err as { name?: string })?.name !== 'AbortError') {
+          console.error(`Failed to load metadata for model "${selectedModelId}"`, err);
+        }
+      });
+    return () => controller.abort();
+  }, [models, selectedModelId, handleZarrMeta]);
 
   const currentLeadHour = dataset.leadHours[currentStepIndex] ?? 0;
   const currentWindow =
@@ -277,6 +316,12 @@ export default function App() {
       <ShowcaseHeader
         viewMode={viewMode}
         onViewModeChange={setViewMode}
+        models={models}
+        selectedModelId={selectedModelId}
+        onSelectModel={(modelId) => {
+          setSelectedModelId(modelId);
+          setCurrentStepIndex(0);
+        }}
         isFullscreen={isFullscreen}
         onToggleFullscreen={toggleFullscreen}
         isPlaying={isPlaying}
@@ -284,16 +329,6 @@ export default function App() {
         leadHour={currentLeadHour}
         validMyanmarTime={currentWindow}
       />
-
-      {/* Overview HUD only on city-trends — radar page uses map pins; empty forecasts crash OverviewStrip */}
-      {viewMode === 'city_trends' && (
-        <OverviewStrip
-          dataset={dataset}
-          selectedCity={selectedCity}
-          currentStepIndex={currentStepIndex}
-          onSelectStepIndex={setCurrentStepIndex}
-        />
-      )}
 
       {/* Full-bleed Edge-to-Edge Satellite / Map Viewport (No White Boxes!) */}
       <main className="h-full w-full">
@@ -313,6 +348,7 @@ export default function App() {
           <ErrorBoundary>
             <ForecastMap2D
               dataset={dataset}
+              modelId={selectedModelId}
               currentStepIndex={currentStepIndex}
               selectedCity={selectedCity}
               onSelectCity={handleSelectCity}
@@ -320,21 +356,28 @@ export default function App() {
               onLayerChange={setActiveLayer}
               showWindParticles={showWindParticles}
               onToggleWindParticles={() => setShowWindParticles((v) => !v)}
-              onZarrMeta={handleZarrMeta}
             />
           </ErrorBoundary>
         )}
 
-        {viewMode === 'city_trends' && (
+        {(viewMode === 'city_trends' || hasVisitedCityTrends) && (
+          <div
+            aria-hidden={viewMode !== 'city_trends'}
+            className={`absolute inset-0 transition-opacity duration-200 ease-out ${
+              viewMode === 'city_trends' ? 'opacity-100' : 'pointer-events-none opacity-0'
+            }`}
+            style={{ visibility: viewMode === 'city_trends' ? 'visible' : 'hidden' }}
+          >
           <ErrorBoundary>
             <CityForecastPanel
-              dataset={dataset}
+              modelId={selectedModelId}
               selectedCity={selectedCity}
               onSelectCity={handleSelectCity}
               currentStepIndex={currentStepIndex}
               onSelectStepIndex={setCurrentStepIndex}
             />
           </ErrorBoundary>
+          </div>
         )}
       </main>
 
@@ -349,7 +392,6 @@ export default function App() {
         onChangeSpeed={setPlaybackSpeed}
         autoLoop={autoLoop}
         onToggleAutoLoop={() => setAutoLoop((v) => !v)}
-        selectedCity={selectedCity}
       />
 
 

@@ -2,6 +2,7 @@ import React from 'react';
 import { ViewMode } from '../types/forecast';
 import { BURMESE_STRINGS } from '../utils/burmese';
 import { Maximize2, Minimize2, Play, Pause, Globe, Map, BarChart3, Cpu, Clock } from 'lucide-react';
+import type { ZarrModel } from '../services/zarrApi';
 
 interface ShowcaseHeaderProps {
   viewMode: ViewMode;
@@ -12,6 +13,9 @@ interface ShowcaseHeaderProps {
   onTogglePlay: () => void;
   leadHour?: number;
   validMyanmarTime: string;
+  models: ZarrModel[];
+  selectedModelId: string;
+  onSelectModel: (modelId: string) => void;
 }
 
 export const ShowcaseHeader: React.FC<ShowcaseHeaderProps> = ({
@@ -22,6 +26,9 @@ export const ShowcaseHeader: React.FC<ShowcaseHeaderProps> = ({
   isPlaying,
   onTogglePlay,
   validMyanmarTime,
+  models,
+  selectedModelId,
+  onSelectModel,
 }) => {
   const navBtn = (mode: ViewMode, icon: React.ReactNode, label: string) => (
     <button
@@ -71,6 +78,28 @@ export const ShowcaseHeader: React.FC<ShowcaseHeaderProps> = ({
 
         {/* Actions — always visible on the right, never overlapped */}
         <div className="relative z-10 flex shrink-0 items-center gap-1.5 sm:gap-2 ml-auto">
+          <label
+            className="flex min-w-0 items-center gap-1 rounded-full border border-white/15 bg-white/5 px-2 py-1.5 text-[11px] text-slate-300 sm:gap-1.5 sm:px-2.5"
+            title="Select the local forecast model"
+          >
+            <Cpu className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+            <span className="hidden sm:inline">Model</span>
+            <select
+              aria-label="Forecast model"
+              value={selectedModelId}
+              onChange={(event) => onSelectModel(event.target.value)}
+              disabled={!models.length}
+              className="max-w-[5.5rem] bg-transparent text-[11px] font-semibold text-white outline-none disabled:opacity-50 sm:max-w-28 sm:text-xs"
+            >
+              {models.length === 0 && <option value={selectedModelId}>Loading…</option>}
+              {models.map((model) => (
+                <option key={model.id} value={model.id} disabled={!model.available} className="bg-slate-900">
+                  {model.label}{model.available ? '' : ' (missing)'}
+                </option>
+              ))}
+            </select>
+          </label>
+
           {validMyanmarTime && (
             <div
               className="hidden 2xl:flex max-w-[16rem] items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-950/40 px-2.5 py-1 text-[11px] text-emerald-300"

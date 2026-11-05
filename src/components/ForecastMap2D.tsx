@@ -12,10 +12,12 @@ import {
   type ZarrField,
   type ZarrMeta,
 } from '../services/zarrApi';
+import { MYANMAR_BORDER_POINTS } from '../utils/geo';
 import { ZoomIn, ZoomOut, RotateCcw, Maximize2 } from 'lucide-react';
 
 interface ForecastMap2DProps {
   dataset: ForecastDataset;
+  modelId: string;
   currentStepIndex: number;
   selectedCity: CityInfo;
   onSelectCity: (city: CityInfo) => void;
@@ -23,34 +25,28 @@ interface ForecastMap2DProps {
   onLayerChange: (layer: MapLayer) => void;
   showWindParticles: boolean;
   onToggleWindParticles: () => void;
-  onZarrMeta?: (meta: ZarrMeta) => void;
 }
 
 /**
- * Display window only: 40°S–40°N, 50–180°E.
- * Pan/zoom stay inside this box; heat crops are clamped to it.
+ * The basemap is global; clamp image overlays to Web Mercator's usable world.
  */
 const DISPLAY_BOUNDS = {
-  west: 50.0,
-  south: -40.0,
+  west: -180.0,
+  south: -85.0,
   east: 180.0,
-  north: 40.0,
+  north: 85.0,
 };
-/** MapLibre maxBounds: [[west, south], [east, north]] */
-const MAP_MAX_BOUNDS: [[number, number], [number, number]] = [
-  [DISPLAY_BOUNDS.west, DISPLAY_BOUNDS.south],
-  [DISPLAY_BOUNDS.east, DISPLAY_BOUNDS.north],
-];
 /** Default / reset camera inside the display window (Myanmar / SE Asia + BoB) */
 const STORM_FOCUS_BOUNDS: [[number, number], [number, number]] = [
   [78.0, -5.0],
   [130.0, 35.0],
 ];
-/** Fallback heat crop = full display window */
+/** Fallback viewport heat crop; city pins use a smaller Myanmar-only crop. */
 const FALLBACK_BBOX = { ...DISPLAY_BOUNDS };
+const CITY_PIN_BBOX = { west: 90.0, south: 8.0, east: 102.0, north: 28.0 };
 /** Placeholder image corners before the first field arrives */
 const BLANK_EXTENT = { ...DISPLAY_BOUNDS };
-/** Soft zoom floor — maxBounds may raise the effective min zoom to fit the box */
+/** Keep the map usable at a whole-continent scale while allowing global panning. */
 const MIN_ZOOM = 3.5;
 const MAX_ZOOM = 12;
 const EMPTY_PNG =
@@ -407,53 +403,11 @@ function satelliteStyle(): maplibregl.StyleSpecification {
   };
 }
 
-/** Normalize Natural Earth / legacy sea-borders into outline features for all countries. */
-function bordersToGeoJSON(borders: any): GeoJSON.FeatureCollection {
-  const features: GeoJSON.Feature[] = [];
-
-  // Natural Earth FeatureCollection (world)
-  if (borders?.type === 'FeatureCollection' && Array.isArray(borders.features)) {
-    for (const f of borders.features) {
-      if (!f?.geometry) continue;
-      const p = f.properties || {};
-      const name = String(p.ADMIN || p.NAME || p.NAME_EN || p.name || '');
-      features.push({
-        type: 'Feature',
-        properties: {
-          name,
-          myanmar: name === 'Myanmar' || name === 'Burma',
-        },
-        geometry: f.geometry,
-      });
-    }
-    return { type: 'FeatureCollection', features };
-  }
-
-  // Legacy sea-borders.json shape: { countries: [{ name, rings }] }
-  for (const country of borders?.countries || []) {
-    for (const ring of country.rings || []) {
-      if (!ring || ring.length < 3) continue;
-      const coords = ring.map(([lon, lat]: [number, number]) => [lon, lat]);
-      if (
-        coords[0][0] !== coords[coords.length - 1][0] ||
-        coords[0][1] !== coords[coords.length - 1][1]
-      ) {
-        coords.push(coords[0]);
-      }
-      features.push({
-        type: 'Feature',
-        properties: { name: country.name, myanmar: country.name === 'Myanmar' },
-        geometry: { type: 'LineString', coordinates: coords },
-      });
-    }
-  }
-  return { type: 'FeatureCollection', features };
-}
-
 function buildCityPinEl(
   city: CityInfo,
   selected: boolean,
   tempC: number | null,
+  modelLabel: string,
   onClick: () => void
 ): HTMLDivElement {
   const mm = BURMESE_CITIES_MAP[city.name]?.mmName || city.mmName || city.name;
@@ -461,7 +415,7 @@ function buildCityPinEl(
     tempC != null ? `${toBurmeseNumber(Math.round(tempC))}°C` : '—';
   const root = document.createElement('div');
   root.style.cssText = 'display:flex;flex-direction:column;align-items:center;cursor:pointer;';
-  root.title = `${city.name} · ${tempC != null ? `${tempC.toFixed(1)} °C` : 'n/a'} (forecast.zarr t2m)`;
+  root.title = `${city.name} · ${tempC != null ? `${tempC.toFixed(1)} °C` : 'n/a'} (${modelLabel} t2m)`;
   root.innerHTML = `
     <div style="
       width:${selected ? 14 : 11}px;height:${selected ? 14 : 11}px;border-radius:999px;
@@ -484,11 +438,11 @@ function buildCityPinEl(
 
 export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
   dataset,
+  modelId,
   currentStepIndex,
   selectedCity,
   onSelectCity,
   onLayerChange,
-  onZarrMeta,
 }) => {
   const mapHostRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -503,7 +457,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
   const [meta, setMeta] = useState<ZarrMeta | null>(null);
   const [variable, setVariable] = useState('t2m');
   const [field, setField] = useState<ZarrField | null>(null);
-  /** Always t2m from forecast.zarr for city pin temperatures */
+  /** Selected-model near-surface temperature used for city pin labels */
   const [tempField, setTempField] = useState<ZarrField | null>(null);
   const [opacity, setOpacity] = useState(0.72);
   const [showBorders, setShowBorders] = useState(true);
@@ -517,14 +471,24 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     () => meta?.available_variables || [],
     [meta]
   );
+  const pinTemperatureVariable = availableVars.includes('t2m')
+    ? 't2m'
+    : availableVars.find((id) => id.startsWith('t')) || '';
 
-  // Load meta once
+  // Load metadata for the selected local model.
   useEffect(() => {
     const ac = new AbortController();
-    fetchZarrMeta(ac.signal)
+    abortRef.current?.abort();
+    tempAbortRef.current?.abort();
+    lastBboxKeyRef.current = '';
+    clearOverlay();
+    setMeta(null);
+    setField(null);
+    setTempField(null);
+    setError(null);
+    fetchZarrMeta(modelId, ac.signal)
       .then((m) => {
         setMeta(m);
-        onZarrMeta?.(m);
         const first = m.available_variables.includes('t2m')
           ? 't2m'
           : m.available_variables[0] || 't2m';
@@ -532,10 +496,11 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         setError(null);
       })
       .catch((e) => {
+        if (e?.name === 'AbortError') return;
         setError(String(e.message || e));
       });
     return () => ac.abort();
-  }, [onZarrMeta]);
+  }, [modelId]);
 
   // Create map
   useEffect(() => {
@@ -548,8 +513,6 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
       zoom: 4.2,
       minZoom: MIN_ZOOM,
       maxZoom: MAX_ZOOM,
-      // Hard wall: only 40°S–40°N, 50–180°E is visible / pannable
-      maxBounds: MAP_MAX_BOUNDS,
       dragPan: true,
       scrollZoom: true,
       boxZoom: true,
@@ -582,43 +545,38 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         });
       }
 
-      try {
-        // World country outlines (Natural Earth 110m); fall back to regional sea-borders
-        let bordersRes = await fetch('/forecast_data/world-countries-110m.geojson');
-        if (!bordersRes.ok) {
-          bordersRes = await fetch('/forecast_data/sea-borders.json');
-        }
-        if (bordersRes.ok) {
-          const borders = await bordersRes.json();
-          map.addSource('borders', {
-            type: 'geojson',
-            data: bordersToGeoJSON(borders),
-          });
-          map.addLayer({
-            id: 'borders-glow',
-            type: 'line',
-            source: 'borders',
-            paint: {
-              'line-color': ['case', ['get', 'myanmar'], '#34d399', '#ffffff'],
-              'line-width': ['case', ['get', 'myanmar'], 7, 2.4],
-              'line-opacity': ['case', ['get', 'myanmar'], 0.55, 0.35],
-              'line-blur': ['case', ['get', 'myanmar'], 1.6, 0.6],
-            },
-          });
-          map.addLayer({
-            id: 'borders-line',
-            type: 'line',
-            source: 'borders',
-            paint: {
-              'line-color': ['case', ['get', 'myanmar'], '#a7f3d0', '#ffffff'],
-              'line-width': ['case', ['get', 'myanmar'], 3.2, 1.15],
-              'line-opacity': ['case', ['get', 'myanmar'], 1, 0.85],
-            },
-          });
-        }
-      } catch {
-        /* borders optional */
-      }
+      map.addSource('myanmar-border', {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'LineString', coordinates: MYANMAR_BORDER_POINTS },
+        },
+      });
+      map.addLayer({
+        id: 'myanmar-border-glow',
+        type: 'line',
+        source: 'myanmar-border',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#34d399',
+          'line-width': 5,
+          'line-opacity': 0.2,
+          'line-blur': 2,
+        },
+      });
+      map.addLayer({
+        id: 'myanmar-border-dots',
+        type: 'line',
+        source: 'myanmar-border',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#a7f3d0',
+          'line-width': 2.4,
+          'line-opacity': 0.85,
+          'line-dasharray': [0.55, 2],
+        },
+      });
 
       map.fitBounds(STORM_FOCUS_BOUNDS, {
         padding: { top: 88, bottom: 120, left: 40, right: 72 },
@@ -631,6 +589,17 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
 
     const onWinResize = () => map.resize();
     window.addEventListener('resize', onWinResize);
+    let borderPulse = 0;
+    const borderPulseTimer = window.setInterval(() => {
+      borderPulse = (borderPulse + 1) % 4;
+      const opacity = [0.62, 0.82, 1, 0.82][borderPulse];
+      if (map.getLayer('myanmar-border-dots')) {
+        map.setPaintProperty('myanmar-border-dots', 'line-opacity', opacity);
+      }
+      if (map.getLayer('myanmar-border-glow')) {
+        map.setPaintProperty('myanmar-border-glow', 'line-opacity', opacity * 0.22);
+      }
+    }, 260);
 
     map.on('mousemove', (e) => {
       const lat = e.lngLat.lat;
@@ -664,6 +633,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
 
     return () => {
       window.removeEventListener('resize', onWinResize);
+      window.clearInterval(borderPulseTimer);
       if (viewportTimerRef.current != null) window.clearTimeout(viewportTimerRef.current);
       map.off('moveend', scheduleViewportRefresh);
       map.off('zoomend', scheduleViewportRefresh);
@@ -690,7 +660,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     const map = mapRef.current;
     if (!map) return;
     const vis = showBorders ? 'visible' : 'none';
-    for (const id of ['borders-line', 'borders-glow']) {
+    for (const id of ['myanmar-border-dots', 'myanmar-border-glow']) {
       if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', vis);
     }
   }, [showBorders]);
@@ -778,6 +748,17 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     }
   };
 
+  const clearOverlay = () => {
+    const map = mapRef.current;
+    if (map) {
+      delete (map as MapLibreMap & { __lastField?: ZarrField }).__lastField;
+      for (const id of ['field-a-layer', 'field-b-layer']) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', 'none');
+      }
+    }
+    setField(null);
+  };
+
   const loadField = () => {
     const map = mapRef.current;
     if (!meta || !fieldReadyRef.current || !map) return;
@@ -794,6 +775,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     const reqVar = variable;
 
     fetchZarrField({
+      modelId,
       variable: reqVar,
       leadHour: reqLead,
       ensemble: 'mean',
@@ -805,7 +787,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         try {
           applyOverlay(f);
           lastBboxKeyRef.current = bboxKey;
-          if (reqVar === 't2m') setTempField(f);
+          if (reqVar === pinTemperatureVariable) setTempField(f);
           setError(null);
           onLayerChange(
             reqVar.startsWith('u') || reqVar.startsWith('v') || reqVar.startsWith('wind')
@@ -825,30 +807,32 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
 
   loadFieldRef.current = loadField;
 
-  /** Separate t2m pull so city pins always show temperature from forecast.zarr */
+  /** Fetch t2m separately so city pins retain temperatures on other layers. */
   const loadTempForPins = () => {
     if (!meta || !fieldReadyRef.current) return;
-    if (variable === 't2m') return; // loadField already sets tempField
+    if (!pinTemperatureVariable || variable === pinTemperatureVariable) return;
     if (tempAbortRef.current) tempAbortRef.current.abort();
     const ac = new AbortController();
     tempAbortRef.current = ac;
     fetchZarrField({
-      variable: 't2m',
+      modelId,
+      variable: pinTemperatureVariable,
       leadHour,
       ensemble: 'mean',
-      bbox: FALLBACK_BBOX,
+      bbox: CITY_PIN_BBOX,
       signal: ac.signal,
     })
       .then((f) => setTempField(f))
       .catch((e) => {
         if (e?.name === 'AbortError') return;
-        console.warn('t2m pin field failed', e);
+        console.warn('City pin temperature field failed', e);
       });
   };
 
   useEffect(() => {
     if (!meta || !mapReady || !fieldReadyRef.current) return;
     // Force reload when variable / lead changes (ignore bbox cache key)
+    abortRef.current?.abort();
     lastBboxKeyRef.current = '';
     // Debounce while timeline is scrubbing/playing so every step isn't cancelled mid-flight
     const t = window.setTimeout(() => {
@@ -859,7 +843,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meta, variable, leadHour, mapReady]);
 
-  // HTML markers: Burmese name + °C sampled from forecast.zarr t2m
+  // HTML markers: Burmese name + °C sampled from the selected model's t2m field.
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
@@ -869,7 +853,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
 
     for (const city of MYANMAR_CITIES) {
       const tempC = tempField ? sampleZarrField(tempField, city.lat, city.lon) : null;
-      const el = buildCityPinEl(city, city.name === selectedCity.name, tempC, () =>
+      const el = buildCityPinEl(city, city.name === selectedCity.name, tempC, meta?.model_label ?? modelId, () =>
         onSelectCity(city)
       );
       const marker = new maplibregl.Marker({ element: el, anchor: 'bottom' })
@@ -877,7 +861,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
         .addTo(map);
       markersRef.current.push(marker);
     }
-  }, [selectedCity.name, tempField, mapReady, onSelectCity]);
+  }, [selectedCity.name, tempField, mapReady, onSelectCity, modelId, meta?.model_label]);
 
   const zoomBy = (delta: number) => {
     const map = mapRef.current;

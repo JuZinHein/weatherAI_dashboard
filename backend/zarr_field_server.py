@@ -1,10 +1,11 @@
 """
-Local showcase zarr field API — reads project-root forecast.zarr.
-Serves /api/meta and /api/field for the MapLibre satellite-radar page.
+Local showcase zarr field API — reads local model stores from the project.
+Serves /api/models, /api/meta, /api/timeseries, and /api/field.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -183,37 +184,13 @@ EARTH2_VARS: dict[str, dict[str, Any]] = {
 }
 
 PANGU_VARS: dict[str, dict[str, Any]] = {
-    "t2m": {
-        "label": "Temperature 2 m",
+    "t1000": {
+        "label": "Temperature 1000 hPa",
         "unit": "°C",
         "native": "K",
         "convert": lambda a: a - 273.15,
         "cmap": "RdYlBu_r",
-        "source": "t2m",
-    },
-    "t500": {
-        "label": "Temperature 500 hPa",
-        "unit": "°C",
-        "native": "K",
-        "convert": lambda a: a - 273.15,
-        "cmap": "RdYlBu_r",
-        "source": "t500",
-    },
-    "t850": {
-        "label": "Temperature 850 hPa",
-        "unit": "°C",
-        "native": "K",
-        "convert": lambda a: a - 273.15,
-        "cmap": "RdYlBu_r",
-        "source": "t850",
-    },
-    "msl": {
-        "label": "Mean sea-level pressure",
-        "unit": "hPa",
-        "native": "Pa",
-        "convert": lambda a: a / 100.0,
-        "cmap": "RdYlBu_r",
-        "source": "msl",
+        "source": "t1000",
     },
     "q850": {
         "label": "Specific humidity 850 hPa",
@@ -252,8 +229,8 @@ PANGU_VARS: dict[str, dict[str, Any]] = {
     "z500": {
         "label": "Geopotential height 500 hPa",
         "unit": "m",
-        "native": "m",
-        "convert": lambda a: a,
+        "native": "m²/s²",
+        "convert": lambda a: a / 9.80665,
         "cmap": "viridis",
         "source": "z500",
     },
@@ -282,6 +259,81 @@ MODELS: dict[str, dict[str, Any]] = {
     },
 }
 
+
+def _is_pangu_store(path: Path) -> bool:
+    root_metadata = path / "zarr.json"
+    temperature_metadata = path / "t1000" / "zarr.json"
+    if not root_metadata.is_file() or not temperature_metadata.is_file():
+        return False
+    try:
+        root = json.loads(root_metadata.read_text(encoding="utf-8"))
+        temperature = json.loads(temperature_metadata.read_text(encoding="utf-8"))
+        attrs = root.get("attributes", {})
+        shape = temperature.get("shape", [])
+        leads = attrs.get("forecast_lead_hours", [])
+        return (
+            root.get("node_type") == "group"
+            and str(attrs.get("model", "")).lower() == "pangu6"
+            and len(shape) == 4
+            and shape[0] == 1
+            and shape[1] == len(leads)
+            and shape[2:] == [721, 1440]
+            and bool(attrs.get("initialization_utc"))
+            and bool(leads)
+        )
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _is_zarr_store(path: Path) -> bool:
+    return (path / "t2m" / "zarr.json").is_file() or _is_pangu_store(path)
+
+
+def _discover_models() -> None:
+    """Register supported Zarr stores beneath models/, including nested .zarr stores."""
+    models_dir = ROOT / "models"
+    discovered_ids: set[str] = set()
+    template = MODELS["earth2"]
+    if models_dir.is_dir():
+        for folder in sorted(models_dir.iterdir(), key=lambda item: item.name.lower()):
+            if not folder.is_dir():
+                continue
+            candidates = [folder / "forecast.zarr", folder]
+            candidates.extend(sorted(folder.glob("*.zarr"), key=lambda item: item.name.lower()))
+            store = next((candidate for candidate in candidates if _is_zarr_store(candidate)), None)
+            if store is None:
+                continue
+
+            model_id = folder.name[:-5] if folder.name.lower().endswith(".zarr") else folder.name
+            if not model_id or model_id == "earth2":
+                continue
+            is_pangu = _is_pangu_store(store)
+            label = " ".join(
+                part.capitalize()
+                for part in model_id.replace("_", " ").replace("-", " ").split()
+            )
+            source_relative = store.relative_to(ROOT).as_posix()
+            MODELS[model_id] = {
+                **template,
+                "id": model_id,
+                "label": label,
+                "short": label,
+                "path": store,
+                "source_relative": source_relative,
+                "layout": "time_lead_lat_lon" if is_pangu else template["layout"],
+                "ensemble_size": 1 if is_pangu else template["ensemble_size"],
+                "has_ensemble": False if is_pangu else template["has_ensemble"],
+                "reconstruct_lat": (90.0, -90.0) if is_pangu else template["reconstruct_lat"],
+                "variables": PANGU_VARS if is_pangu else template["variables"],
+                "notes": [f"Local forecast store discovered in {source_relative}."],
+            }
+            discovered_ids.add(model_id)
+
+    for model_id, model in list(MODELS.items()):
+        if model["source_relative"].startswith("models/") and model_id not in discovered_ids:
+            del MODELS[model_id]
+
+
 app = FastAPI(title="Local showcase zarr field API")
 app.add_middleware(
     CORSMiddleware,
@@ -294,10 +346,11 @@ _cache: dict[str, Any] = {}
 
 
 def _get_model(model_id: str) -> dict[str, Any]:
+    _discover_models()
     if model_id not in MODELS:
         raise HTTPException(404, f"Unknown model: {model_id}")
     model = MODELS[model_id]
-    if not Path(model["path"]).exists():
+    if not _is_zarr_store(Path(model["path"])):
         raise HTTPException(404, f"Model store missing on disk: {model['source_relative']}")
     return model
 
@@ -309,6 +362,19 @@ def _open_coords(model_id: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, dat
 
     model = _get_model(model_id)
     zpath: Path = model["path"]
+    if _is_pangu_store(zpath):
+        root = zarr.open_group(str(zpath), mode="r")
+        attrs = dict(root.attrs)
+        sample = _open_array(model_id, "t1000")
+        lat = np.linspace(90.0, -90.0, int(sample.shape[-2]))
+        lon = np.arange(int(sample.shape[-1]), dtype=float) * (360.0 / int(sample.shape[-1]))
+        lead_hours = np.asarray(attrs["forecast_lead_hours"], dtype=int)
+        init_utc = datetime.fromisoformat(
+            str(attrs["initialization_utc"]).replace("Z", "+00:00")
+        ).astimezone(timezone.utc)
+        _cache[key] = (lat, lon, lead_hours, init_utc)
+        return _cache[key]
+
     lon = np.asarray(zarr.open(str(zpath / "lon"), mode="r"), dtype=float)
     lead = np.asarray(zarr.open(str(zpath / "lead_time"), mode="r"))
     time = np.asarray(zarr.open(str(zpath / "time"), mode="r"))
@@ -373,20 +439,24 @@ def _open_array(model_id: str, name: str):
     return _cache[key]
 
 
-def _array_has_data(model_id: str, name: str) -> bool:
+def _array_is_available(model_id: str, name: str) -> bool:
     model = _get_model(model_id)
     path = model["path"] / name
     if not path.exists() or not (path / "zarr.json").exists():
         return False
     try:
         arr = _open_array(model_id, name)
-        if model["layout"] == "ens_time_lead_lat_lon":
-            sample = np.asarray(arr[0, 0, 0, :, :], dtype=np.float32)
-        else:
-            sample = np.asarray(arr[0, 0, :, :], dtype=np.float32)
-        return bool(np.count_nonzero(sample) > 0)
-    except Exception:
+        expected_dims = 5 if model["layout"] == "ens_time_lead_lat_lon" else 4
+        return len(arr.shape) == expected_dims and all(size > 0 for size in arr.shape)
+    except (OSError, ValueError, TypeError, KeyError):
         return False
+
+
+def _array_has_data(model_id: str, name: str) -> bool:
+    key = f"has_data:{model_id}:{name}"
+    if key not in _cache:
+        _cache[key] = _array_is_available(model_id, name)
+    return bool(_cache[key])
 
 
 def _slice_2d(model_id: str, source: str, lead_idx: int, ensemble: str) -> np.ndarray:
@@ -433,6 +503,76 @@ def _load_field(
     return out
 
 
+def _read_grid_tile(
+    model_id: str,
+    source: str,
+    lead_idx: int,
+    ensemble: str,
+    row_start: int,
+    row_end: int,
+    col_start: int,
+    col_end: int,
+) -> np.ndarray:
+    model = _get_model(model_id)
+    arr = _open_array(model_id, source)
+    layout = model["layout"]
+    if layout == "time_lead_lat_lon":
+        return np.asarray(
+            arr[0, lead_idx, row_start:row_end, col_start:col_end],
+            dtype=np.float32,
+        )
+
+    def read_member(member: int) -> np.ndarray:
+        return np.asarray(
+            arr[member, 0, lead_idx, row_start:row_end, col_start:col_end],
+            dtype=np.float32,
+        )
+
+    if ensemble != "mean":
+        try:
+            member = int(ensemble)
+        except ValueError as exc:
+            raise HTTPException(400, "ensemble must be 'mean' or an integer") from exc
+        if member < 0 or member >= arr.shape[0]:
+            raise HTTPException(
+                400, f"ensemble index out of range 0..{arr.shape[0] - 1}"
+            )
+        return read_member(member)
+
+    total = read_member(0).astype(np.float64)
+    for member in range(1, int(arr.shape[0])):
+        total += read_member(member)
+    return (total / int(arr.shape[0])).astype(np.float32)
+
+
+def _read_variable_tile(
+    model_id: str,
+    cfg: dict[str, Any],
+    lead_idx: int,
+    ensemble: str,
+    row_start: int,
+    row_end: int,
+    col_start: int,
+    col_end: int,
+) -> np.ndarray:
+    if cfg.get("compute") == "wind_speed_10m":
+        u = _read_grid_tile(
+            model_id, "u10m", lead_idx, ensemble,
+            row_start, row_end, col_start, col_end,
+        )
+        v = _read_grid_tile(
+            model_id, "v10m", lead_idx, ensemble,
+            row_start, row_end, col_start, col_end,
+        )
+        raw = np.sqrt(u * u + v * v)
+    else:
+        raw = _read_grid_tile(
+            model_id, cfg["source"], lead_idx, ensemble,
+            row_start, row_end, col_start, col_end,
+        )
+    return cfg["convert"](raw)
+
+
 def _model_regions(model: dict[str, Any]) -> dict[str, Any]:
     out = {}
     for rid in model["regions"]:
@@ -458,6 +598,7 @@ def health() -> dict[str, Any]:
 
 @app.get("/api/models")
 def list_models() -> dict[str, Any]:
+    _discover_models()
     items = []
     for mid, m in MODELS.items():
         items.append(
@@ -466,12 +607,13 @@ def list_models() -> dict[str, Any]:
                 "label": m["label"],
                 "short": m["short"],
                 "source_relative": m["source_relative"],
-                "available": Path(m["path"]).exists(),
+                "available": _is_zarr_store(Path(m["path"])),
                 "has_ensemble": m["has_ensemble"],
                 "default_region": m["default_region"],
             }
         )
-    return {"default": "earth2", "models": items}
+    default_model = next((item["id"] for item in items if item["available"]), "earth2")
+    return {"default": default_model, "models": items}
 
 
 @app.get("/api/meta")
@@ -540,7 +682,7 @@ def meta(model: str = Query("earth2")) -> dict[str, Any]:
                 "id": mid,
                 "label": mm["label"],
                 "short": mm["short"],
-                "available": Path(mm["path"]).exists(),
+                "available": _is_zarr_store(Path(mm["path"])),
             }
             for mid, mm in MODELS.items()
         ],
@@ -718,26 +860,45 @@ def timeseries(
         raise HTTPException(400, "no points provided")
 
     lat, lon, lead_hours, init_utc = _open_coords(model)
-    values0 = cfg["convert"](_load_field(model, cfg, 0, ensemble))
-    values0, lon_disp = _unwrap_lon_grid(values0, lon)
+    lon_wrapped = np.where(lon > 180.0, lon - 360.0, lon)
+    lon_order = np.argsort(lon_wrapped)
+    lon_disp = lon_wrapped[lon_order]
 
-    # Precompute nearest indices on the display lon axis
-    point_idx: list[tuple[str, int, int]] = []
+    point_idx: list[tuple[str, int, int, float, float]] = []
     for name, plat, plon in parsed:
         ri = _nearest_index(lat, plat)
-        ci = _nearest_index(lon_disp, plon)
-        point_idx.append((name, ri, ci))
+        display_ci = _nearest_index(lon_disp, plon)
+        point_idx.append((name, ri, int(lon_order[display_ci]), plat, plon))
 
-    series: dict[str, list[float]] = {name: [] for name, _, _ in point_idx}
-    for li, lead in enumerate(lead_hours.tolist()):
-        if li == 0:
-            field2d = values0
-        else:
-            raw = _load_field(model, cfg, int(li), ensemble)
-            field2d = cfg["convert"](raw)
-            field2d, _ = _unwrap_lon_grid(field2d, lon)
-        for name, ri, ci in point_idx:
-            series[name].append(round(float(field2d[ri, ci]), 2))
+    source = "u10m" if cfg.get("compute") == "wind_speed_10m" else cfg["source"]
+    arr = _open_array(model, source)
+    row_chunk, col_chunk = (int(size) for size in arr.chunks[-2:])
+    grouped_points: dict[tuple[int, int], list[tuple[str, int, int]]] = {}
+    for name, ri, ci, _plat, _plon in point_idx:
+        key = (ri // row_chunk, ci // col_chunk)
+        grouped_points.setdefault(key, []).append((name, ri, ci))
+
+    series: dict[str, list[float]] = {name: [] for name, *_ in point_idx}
+    for lead_idx in range(len(lead_hours)):
+        for (row_chunk_idx, col_chunk_idx), members in grouped_points.items():
+            row_start = row_chunk_idx * row_chunk
+            col_start = col_chunk_idx * col_chunk
+            row_end = min(row_start + row_chunk, len(lat))
+            col_end = min(col_start + col_chunk, len(lon))
+            tile = _read_variable_tile(
+                model,
+                cfg,
+                lead_idx,
+                ensemble,
+                row_start,
+                row_end,
+                col_start,
+                col_end,
+            )
+            for name, ri, ci in members:
+                series[name].append(
+                    round(float(tile[ri - row_start, ci - col_start]), 2)
+                )
 
     return {
         "model": model,
@@ -755,7 +916,7 @@ def timeseries(
                 "grid_lat": round(float(lat[_nearest_index(lat, plat)]), 4),
                 "grid_lon": round(float(lon_disp[_nearest_index(lon_disp, plon)]), 4),
             }
-            for name, plat, plon in parsed
+            for name, _ri, _ci, plat, plon in point_idx
         ],
         "series": series,
     }

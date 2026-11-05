@@ -9,6 +9,11 @@ Entry points:
 - `notebook/NVIDIA_Earth2_GPU_Colab_Myanmar.ipynb` — optional Colab zip factory (globe / city)
 
 ```bash
+python -m venv .venv
+# Windows
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+# macOS / Linux
+# .venv/bin/python -m pip install -r backend/requirements.txt
 npm install
 npm run dev
 # → http://localhost:5180
@@ -17,6 +22,8 @@ npm run dev
 # if needed alone:
 npm run zarr-api
 ```
+
+For the optional GFS forecast-generation pipeline, install `backend/requirements-pipeline.txt` into `.venv`; it adds Earth2Studio and Matplotlib.
 
 Deep start guide: [`README.md`](README.md).
 

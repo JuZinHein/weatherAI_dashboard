@@ -1,20 +1,6 @@
-# NVIDIA FourCastNet Myanmar Automated Pipeline Requirements
-# Run: pip install -r requirements.txt
-
-# Step 1: NOAA GFS global data ingestion (73 channels)
-earth2studio>=0.20.0
-
-# Step 2: NVIDIA NIM API / tensor manipulation
-requests>=2.31.0
-numpy>=1.24.0
-zarr>=3.0.0
-fastapi>=0.110.0
-uvicorn>=0.27.0
-torch>=2.1.0
-
-# Step 4: Asset generation (RdYlBu_r and viridis colormaps)
-matplotlib>=3.7.0
-
-# Step 5 & 6: Scheduling & Utilities
-schedule>=1.2.0
-python-dotenv>=1.0.0
+# Local Zarr field API runtime (Python 3.11).
+# Upper bounds keep upgrades within the current compatible release line.
+numpy>=2.4.6,<2.5
+zarr>=3.1.6,<3.2
+fastapi>=0.162.0,<0.163
+uvicorn>=0.54.0,<0.55

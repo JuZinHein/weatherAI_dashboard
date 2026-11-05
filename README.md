@@ -30,7 +30,7 @@ Internal research / software showcase. Local forecast skill has **not** been for
 | --- | --- |
 | Node.js **20+** | app server + Vite |
 | npm | uses `package-lock.json` |
-| Python **3.10+** | `zarr`, `numpy`, `fastapi`, `uvicorn` for the field API |
+| Python **3.11+** | Install `backend/requirements.txt` for the local field API |
 | Forecast stores | put `forecast.zarr/` in the project root for Earth-2, or put additional model stores under `models/<model-id>/` (gitignored — do not commit) |
 | Modern browser | WebGL / MapLibre |
 | Network | **satellite-radar** page needs internet for Esri basemap tiles; heat data stays local |
@@ -48,9 +48,16 @@ cd Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase
 #    ./models/model2/
 #    ./models/model3/
 
+python -m venv .venv
+# Windows
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+# macOS / Linux
+# .venv/bin/python -m pip install -r backend/requirements.txt
 npm install
 npm run dev
 ```
+
+The local API uses the repository `.venv` when present.
 
 Open **http://localhost:5180**
 
@@ -145,6 +152,12 @@ Bundled JSON / Colab zip  ──►  React (globe + city trends: temp + wind)
 4. The field API serves **viewport/region crops** as JSON; the browser never loads the whole store.
 
 Health check: `http://127.0.0.1:8766/api/health`
+
+The optional GFS forecast-generation pipeline has additional, much larger dependencies. Install them only if you use `backend/fourcastnet_pipeline.py`:
+
+```bash
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements-pipeline.txt
+```
 
 ## Make a new Colab forecast zip (globe / city)
 

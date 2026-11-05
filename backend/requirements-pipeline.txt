@@ -1,0 +1,5 @@
+# Optional dependencies for backend/fourcastnet_pipeline.py.
+# This adds forecast-generation tools on top of the local API environment.
+-r requirements.txt
+earth2studio>=0.20.0,<0.21
+matplotlib>=3.11.2,<3.12

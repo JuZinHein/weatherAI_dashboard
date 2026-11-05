@@ -9,7 +9,16 @@ export async function parseForecastZip(file: File): Promise<ForecastDataset> {
   const loadedZip = await zip.loadAsync(file);
 
   // 1. Read metadata.json
-  let metadata = DEFAULT_FORECAST_DATA.metadata;
+  let metadata = {
+    ...DEFAULT_FORECAST_DATA.metadata,
+    initialization_utc: '',
+    requested_at_utc: '',
+    requested_target_utc: '',
+    display_generated_utc: '',
+    final_valid_utc: '',
+    final_valid_myanmar: '',
+    completed_utc: '',
+  };
   const metaEntry = Object.values(loadedZip.files).find((f) => f.name.endsWith('metadata.json'));
   if (metaEntry) {
     try {
@@ -21,7 +30,7 @@ export async function parseForecastZip(file: File): Promise<ForecastDataset> {
   }
 
   // 2. Read CSV rows
-  let csvRows: CsvStepRow[] = DEFAULT_FORECAST_DATA.csvRows;
+  let csvRows: CsvStepRow[] = [];
   const csvEntry = Object.values(loadedZip.files).find((f) => f.name.endsWith('all_steps_with_future_flags.csv') || (f.name.endsWith('.csv') && !f.name.includes('future_city')));
   if (csvEntry) {
     try {
@@ -64,7 +73,7 @@ export async function parseForecastZip(file: File): Promise<ForecastDataset> {
 
   // 4. Regional Forecast NPZ
   let leadHours = DEFAULT_FORECAST_DATA.leadHours;
-  let validTimesUtc = DEFAULT_FORECAST_DATA.validTimesUtc;
+  let validTimesUtc: string[] = [];
   let isFuture = DEFAULT_FORECAST_DATA.isFuture;
   let lats = DEFAULT_FORECAST_DATA.lats;
   let lons = DEFAULT_FORECAST_DATA.lons;
@@ -183,6 +192,19 @@ export async function parseForecastZip(file: File): Promise<ForecastDataset> {
       }
     } catch (err) {
       console.warn('Failed to parse inner regional_forecast.npz', err);
+    }
+  }
+
+  if (!validTimesUtc.length) {
+    if (csvRows.length) {
+      validTimesUtc = csvRows.map((row) => row.validUtc);
+    } else if (metadata.initialization_utc) {
+      const initialization = new Date(metadata.initialization_utc);
+      if (!Number.isNaN(initialization.getTime())) {
+        validTimesUtc = leadHours.map((hour) =>
+          new Date(initialization.getTime() + hour * 3600_000).toISOString()
+        );
+      }
     }
   }
 

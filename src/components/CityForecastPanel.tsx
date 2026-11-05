@@ -555,7 +555,7 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                         fill={primaryVar.color}
                         stroke="#ffffff"
                         strokeWidth="1.5"
-                        className="cursor-pointer transition-transform hover:scale-125"
+                        className="cursor-pointer transition-opacity hover:opacity-80"
                         onClick={() => onSelectStepIndex(i)}
                       />
                       <rect
@@ -566,7 +566,7 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
                         fill={secondaryVar.color}
                         stroke="#ffffff"
                         strokeWidth="1.5"
-                        className="cursor-pointer transition-transform hover:scale-125"
+                        className="cursor-pointer transition-opacity hover:opacity-80"
                         onClick={() => onSelectStepIndex(i)}
                       />
                     </g>

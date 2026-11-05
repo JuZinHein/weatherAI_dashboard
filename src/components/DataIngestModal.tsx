@@ -174,7 +174,7 @@ export const DataIngestModal: React.FC<DataIngestModalProps> = ({
               <div>မော်ဒယ်: <strong className="text-emerald-400">{parsedPreview.metadata?.model || 'NVIDIA FCN'}</strong></div>
               <div>GPU စက်: <strong>{parsedPreview.metadata?.gpu || 'NVIDIA A100'}</strong></div>
               <div>ခန့်မှန်းချက်အဆင့်များ: <strong>{toBurmeseNumber(parsedPreview.leadHours?.length || 6)} ဆင့်</strong></div>
-              <div>အချိန်: <strong>{parsedPreview.metadata?.final_valid_myanmar || '2026-11-03'}</strong></div>
+              <div>အချိန်: <strong>{parsedPreview.metadata?.final_valid_myanmar || '—'}</strong></div>
             </div>
           </div>
         )}

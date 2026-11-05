@@ -621,6 +621,7 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
       {activePopupCity && (
         <CityWeatherPopup3D
           city={activePopupCity}
+          validTimesUtc={dataset.validTimesUtc}
           currentStepIndex={currentStepIndex}
           onClose={() => setActivePopupCity(null)}
           onSelectCity={(c) => {

@@ -6,6 +6,7 @@ import { X, Thermometer, Wind } from 'lucide-react';
 
 interface CityWeatherPopup3DProps {
   city: CityInfo;
+  validTimesUtc: string[];
   currentStepIndex: number;
   onClose: () => void;
   /** Kept for call-site compatibility; city is already selected when the popup opens */
@@ -15,14 +16,14 @@ interface CityWeatherPopup3DProps {
 
 export const CityWeatherPopup3D: React.FC<CityWeatherPopup3DProps> = ({
   city,
+  validTimesUtc,
   currentStepIndex,
   onClose,
 }) => {
   const currentF = city.forecasts[currentStepIndex] || city.forecasts[0];
   const mmName = city.mmName || BURMESE_CITIES_MAP[city.name]?.mmName || city.name;
   const region = BURMESE_CITIES_MAP[city.name]?.region || city.state;
-  const stepTimes = city.forecasts.map((f) => f.validUtc);
-  const currentWindow = getStepTimeWindow(stepTimes, currentStepIndex);
+  const currentWindow = getStepTimeWindow(validTimesUtc, currentStepIndex);
 
   const temp = currentF.temperatureC;
   const wind = currentF.windKmh;
@@ -113,7 +114,7 @@ export const CityWeatherPopup3D: React.FC<CityWeatherPopup3DProps> = ({
         <div className={city.forecasts.length > 8 ? 'flex gap-1 overflow-x-auto pb-1' : 'grid grid-cols-6 gap-1'}>
           {city.forecasts.map((f, idx) => {
             const isStepActive = idx === currentStepIndex;
-            const win = getStepTimeWindow(stepTimes, idx);
+            const win = getStepTimeWindow(validTimesUtc, idx);
             return (
               <div
                 key={`${f.leadHours}-${idx}`}

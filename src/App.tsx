@@ -14,15 +14,77 @@ import { CityForecastPanel } from './components/CityForecastPanel';
 import { TimelineControls } from './components/TimelineControls';
 import { DataIngestModal } from './components/DataIngestModal';
 import { ModelInfoModal } from './components/ModelInfoModal';
-import { BURMESE_STRINGS } from './utils/burmese';
+import { BURMESE_STRINGS, formatMyanmarTime } from './utils/burmese';
 import { getStepTimeWindow } from './utils/forecastTime';
 import { Layers } from 'lucide-react';
 import { fetchZarrMeta, fetchZarrModels, type ZarrMeta, type ZarrModel } from './services/zarrApi';
 import { MYANMAR_CITIES } from './data/myanmarCities';
 
+function createDefaultDataset(): ForecastDataset {
+  return {
+    ...DEFAULT_FORECAST_DATA,
+    validTimesUtc: [],
+    metadata: {
+      ...DEFAULT_FORECAST_DATA.metadata,
+      initialization_utc: '',
+      requested_at_utc: '',
+      requested_target_utc: '',
+      display_generated_utc: '',
+      final_valid_utc: '',
+      final_valid_myanmar: '',
+      completed_utc: '',
+    },
+  };
+}
+
+function applyZarrMeta(dataset: ForecastDataset, meta: ZarrMeta): ForecastDataset {
+  const init = new Date(meta.initialization_utc);
+  if (!meta.lead_hours?.length || Number.isNaN(init.getTime())) return dataset;
+
+  const validTimeForLead = (leadHour: number) =>
+    new Date(init.getTime() + leadHour * 3600_000).toISOString();
+  const validTimesUtc = meta.lead_hours.map(validTimeForLead);
+  const finalValidUtc = validTimesUtc[validTimesUtc.length - 1];
+
+  const sameLeads =
+    dataset.leadHours.length === meta.lead_hours.length &&
+    dataset.leadHours.every((hour, index) => hour === meta.lead_hours[index]);
+
+  return {
+    ...dataset,
+    ...(sameLeads
+      ? {}
+      : {
+          leadHours: meta.lead_hours,
+          isFuture: meta.lead_hours.map(() => true),
+        }),
+    validTimesUtc,
+    csvRows: dataset.csvRows.map((row) => {
+      const validUtc = validTimeForLead(row.leadHours);
+      return { ...row, validUtc, validMyanmar: formatMyanmarTime(validUtc) };
+    }),
+    cityForecasts: dataset.cityForecasts.map((city) => ({
+      ...city,
+      forecasts: city.forecasts.map((forecast) => ({
+        ...forecast,
+        validUtc: validTimeForLead(forecast.leadHours),
+      })),
+    })),
+    metadata: {
+      ...dataset.metadata,
+      model: meta.model_label || dataset.metadata.model,
+      initialization_utc: meta.initialization_utc,
+      final_valid_utc: finalValidUtc,
+      final_valid_myanmar: formatMyanmarTime(finalValidUtc),
+      total_rollout_hours:
+        meta.lead_hours[meta.lead_hours.length - 1] ?? dataset.metadata.total_rollout_hours,
+    },
+  };
+}
+
 export default function App() {
   // Prefer bundled zarr-converted forecast over older localStorage uploads
-  const [dataset, setDataset] = useState<ForecastDataset>(() => DEFAULT_FORECAST_DATA);
+  const [dataset, setDataset] = useState<ForecastDataset>(createDefaultDataset);
   // Open on the 3D globe; the radar map remains available from the view switcher.
   const [viewMode, setViewMode] = useState<ViewMode>('globe_3d');
   const [hasVisitedCityTrends, setHasVisitedCityTrends] = useState(false);
@@ -30,6 +92,7 @@ export default function App() {
   const [showWindParticles, setShowWindParticles] = useState<boolean>(true);
   const [models, setModels] = useState<ZarrModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState('earth2');
+  const [activeModelMeta, setActiveModelMeta] = useState<ZarrMeta | null>(null);
 
   // Active timestep index
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
@@ -235,7 +298,11 @@ export default function App() {
   const handleResetDefault = () => {
     ignoreStoredLoad.current = true;
     clearCustomDataset();
-    setDataset(DEFAULT_FORECAST_DATA);
+    setDataset(
+      activeModelMeta?.model === selectedModelId
+        ? applyZarrMeta(createDefaultDataset(), activeModelMeta)
+        : createDefaultDataset(),
+    );
     setCurrentStepIndex(1);
     setSelectedCity(MYANMAR_CITIES[0]);
   };
@@ -261,34 +328,9 @@ export default function App() {
 
   /** When local forecast.zarr is available, align timeline lead hours with the store. */
   const handleZarrMeta = useCallback((meta: ZarrMeta) => {
-    if (!meta.lead_hours?.length) return;
-    const init = meta.initialization_utc ? new Date(meta.initialization_utc) : null;
-    const validTimesUtc = meta.lead_hours.map((h) => {
-      if (!init || Number.isNaN(init.getTime())) return '';
-      return new Date(init.getTime() + h * 3600_000).toISOString();
-    });
-    setDataset((prev) => {
-      const sameLeads =
-        prev.leadHours.length === meta.lead_hours.length &&
-        prev.leadHours.every((h, i) => h === meta.lead_hours[i]);
-      return {
-        ...prev,
-        ...(sameLeads
-          ? {}
-          : {
-              leadHours: meta.lead_hours,
-              isFuture: meta.lead_hours.map(() => true),
-            }),
-        validTimesUtc,
-        metadata: {
-          ...prev.metadata,
-          model: meta.model_label || prev.metadata.model,
-          initialization_utc: meta.initialization_utc || prev.metadata.initialization_utc,
-          total_rollout_hours:
-            meta.lead_hours[meta.lead_hours.length - 1] ?? prev.metadata.total_rollout_hours,
-        },
-      };
-    });
+    if (!meta.lead_hours?.length || Number.isNaN(new Date(meta.initialization_utc).getTime())) return;
+    setActiveModelMeta(meta);
+    setDataset((prev) => applyZarrMeta(prev, meta));
   }, []);
 
   useEffect(() => {
@@ -307,7 +349,6 @@ export default function App() {
   const currentLeadHour = dataset.leadHours[currentStepIndex] ?? 0;
   const currentWindow =
     getStepTimeWindow(dataset.validTimesUtc, currentStepIndex)?.label ??
-    dataset.csvRows[currentStepIndex]?.validMyanmar ??
     '—';
 
   return (

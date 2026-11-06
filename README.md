@@ -2,10 +2,7 @@
 
 Private office showcase: React + Express UI for local forecast models over Myanmar and the Bay of Bengal.
 
-Keep the repo private. Two data paths are supported:
-
-1. **Local Zarr model folders** (recommended for the satellite-radar MapLibre page) — one or more local forecast stores on disk
-2. **Bundled sample / Colab `.zip`** — used by the 3D globe and as a city-trends fallback
+Keep the repo private. All displayed forecast values and forecast timelines come from the selected local Zarr model folder. There is no bundled-sample or uploaded-forecast fallback.
 
 **No NVIDIA API key** is required. This is a demonstration build, not a public product release.
 
@@ -15,11 +12,12 @@ Deep dive: [`how_this_works.md`](how_this_works.md)
 
 | Piece | Source |
 | --- | --- |
-| Default landing view | **3D globe** with bundled forecast data; switch views to open the satellite-radar map |
-| Satellite-radar map | **MapLibre** + Esri World Imagery tiles + heat overlay from selected local Zarr model via Python field API |
-| Zarr variables on that map | `t2m`, `t500`, `msl`, `q850`, `tcwv`, `u10m`, `v10m`, `wind10m` (derived), `u100m`, `v100m`, `z500` |
-| 3D globe | Bundled `src/data/forecastData.json` or a dropped Colab FCN zip |
-| City trends | Selected local model's Zarr time series; falls back to bundled/Colab **2 m temperature** + **10 m wind** |
+| Default landing view | **3D globe** with a temperature field loaded from the selected local Zarr model |
+| Satellite-radar map | **MapLibre** + Esri World Imagery or local offline tiles + heat overlay from selected local Zarr model via Python field API |
+| Zarr variables | Available fields from the selected store, including `t2m`, `t500`, `msl`, `q850`, `tcwv`, `u10m`, `v10m`, `wind10m` (derived), `u100m`, `v100m`, `z500` |
+| 3D globe and city popup | Selected local model's Zarr temperature field and Zarr city time series |
+| City trends | Selected local model's Zarr time series; unavailable fields are not replaced with estimates |
+| Humidity | `q850` is specific humidity at 850 hPa and `tcwv` is total column water vapour; neither is relative humidity (%) or dew point |
 | Storm / cyclone JSON | Notebook can write `storm_alert.json`; **UI does not show** a cyclone card |
 
 Internal research / software showcase. Local forecast skill has **not** been formally validated here.
@@ -28,25 +26,20 @@ Internal research / software showcase. Local forecast skill has **not** been for
 
 | Need | Notes |
 | --- | --- |
-| Node.js **20+** | app server + Vite |
+| Node.js **20.19+ or 22.12+** | Required by the installed Vite 8 release |
 | npm | uses `package-lock.json` |
 | Python **3.11+** | Install `backend/requirements.txt` for the local field API |
-| Forecast stores | put `forecast.zarr/` in the project root for Earth-2, or put additional model stores under `models/<model-id>/` (gitignored — do not commit) |
+| Forecast stores | Put supported Zarr stores under `models/<model-id>/` (gitignored — do not commit) |
 | Modern browser | WebGL / MapLibre |
-| Network | **satellite-radar** page needs internet for Esri basemap tiles; heat data stays local |
-| GPU Colab/Kaggle (optional) | only to **export a new Colab zip** for the globe and fallback city data |
+| Network | Internet is used for online Esri imagery and optional tile downloads; downloaded tiles and the forecast API can be used locally |
+| GPU Colab/Kaggle (optional) | Not used by the dashboard data path |
 
 ## Quick start
 
 ```bash
-cd Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase
-
-# 1. Put the Earth-2 store here:
-#    ./forecast.zarr/
-#    Additional model stores can be placed at:
-#    ./models/model1/   (or ./models/model1/forecast.zarr)
-#    ./models/model2/
-#    ./models/model3/
+# From the repository root, put supported model stores under ./models/<model-id>/
+#    For example: ./models/Pangu6/<forecast-run>.zarr/
+#                 ./models/NvidiaFourCastNetV3/forecast.zarr/
 
 python -m venv .venv
 # Windows
@@ -61,21 +54,61 @@ The local API uses the repository `.venv` when present.
 
 Open **http://localhost:5180**
 
-`npm run dev` starts Express + Vite on **5180** and spawns (or reuses) the zarr field API on **8766**. Proxy path: `/api/zarr/*`.
+`npm run dev` starts Express + Vite on **5180** and spawns (or reuses) this project's Zarr API on **8767**. Proxy path: `/api/zarr/*`.
 
 If the map says the zarr API is unavailable:
 
 ```bash
 npm run zarr-api
-# → http://127.0.0.1:8766
+# → http://127.0.0.1:8767
 ```
 
-This **Local_** repo uses port **5180** so it does not collide with the normal (non-local) showcase on **http://localhost:3000**.
+This repo uses port **5180** so it does not collide with the normal (non-local) showcase on **http://localhost:3000**.
+
+### Offline map basemap
+
+Offline imagery is optional and is **not included in a fresh checkout**. Download
+it while connected to the internet, on the same computer that will run the
+dashboard:
+
+```bash
+npm run basemap:download
+```
+
+Then open the **radar/map** view. The app uses online Esri
+World Imagery while online and switches to local tiles when the browser reports
+offline or an Esri tile request fails. To test it, keep the local app running,
+disconnect from the internet, and reload or reopen the radar/map view at
+`http://localhost:5180`.
+
+The default download covers the **whole world** (all longitudes and the full
+Web Mercator latitude range) at zoom levels 0–5, which is **1,365 tiles**. It
+saves `public/basemap/offline/{z}/{x}/{y}.jpg` and `tiles.json`. The script
+skips existing tiles, retries failed requests, and reports failures. Tiles
+cover the world for offline panning, but the map keeps its previous zoom-out
+limit of 3.5, so it does not fit the entire globe in one view. Imagery gets
+coarser as you zoom in, and detail does not increase beyond level 5. Higher
+download zooms can be requested explicitly, but the tile count grows rapidly.
+
+The offline folder is gitignored and is not included in clones or deployments;
+download tiles separately on each computer before going offline. Esri imagery
+is subject to Esri's terms and attribution requirements; keep downloaded tiles
+local unless your license permits redistribution.
+
+If offline imagery does not appear, check that:
+
+1. `public/basemap/offline/0/` through `public/basemap/offline/5/` contain
+   `.jpg` tile files (not just `tiles.json`).
+2. The dashboard is still served locally and the map view is the radar/map
+   view, not the 3D globe.
+3. Tiles were downloaded into this checkout's `public/basemap/offline/` folder
+   before internet access was disconnected.
 
 | Script | What |
 | --- | --- |
-| `npm run dev` | Express + Vite on **5180** + auto-start zarr API on **8766** |
+| `npm run dev` | Express + Vite on **5180** + auto-start Zarr API on **8767** |
 | `npm run zarr-api` | Python field server only (`backend/zarr_field_server.py`) |
+| `npm run basemap:download` | Download worldwide Esri imagery (zoom 0–5; 1,365 tiles) |
 | `npm run build` | production build → `dist/` |
 | `npm start` | same entry as `dev` (`tsx server.ts`) |
 | `npm run lint` | `tsc --noEmit` |
@@ -83,22 +116,20 @@ This **Local_** repo uses port **5180** so it does not collide with the normal (
 ## Layout
 
 ```text
-Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/
-  forecast.zarr/            local Earth-2 global store (gitignored, multi-GB)
+weatherAI_dashboard/
   models/
-    model1/                 additional model stores (same Zarr array layout)
-    model2/
-    model3/
-  server.ts                 Express + Vite; proxies /api/zarr → :8766
+    Pangu6/                 local Zarr stores (gitignored, may be multi-GB)
+    NvidiaFourCastNetV3/
+  server.ts                 Express + Vite; proxies /api/zarr → :8767
   backend/
     zarr_field_server.py    FastAPI model discovery + metadata/field crops
     fourcastnet_pipeline.py optional automation sketch
-  notebook/                 Colab / Kaggle GPU export → forecast .zip
+  notebook/                 optional research notebook; not used by the dashboard
   public/
-    forecast_data/          bundled layers, sea-borders.json, configs
+    basemap/offline/{z}/{x}/{y}.jpg  worldwide offline Esri tiles (zoom 0–5 by default)
     textures/               globe textures (offline)
   src/
-    App.tsx                 views, playback, zip drop
+    App.tsx                 views, Zarr model selection, playback
     components/
       ForecastMap2D.tsx     MapLibre satellite-radar page
       SatelliteGlobe3D.tsx  3D globe
@@ -106,8 +137,8 @@ Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/
       TimelineControls.tsx  0.5x … 10x scrubber
     services/
       zarrApi.ts            client for /api/zarr/meta + /api/zarr/field
-      weatherVariables.ts   Colab zip fields (temp + wind)
-    data/                   defaultForecast + forecastData.json
+      weatherVariables.ts   supported local Zarr fields
+    data/                   geography and display metadata
   how_this_works.md
   README.md
 ```
@@ -115,19 +146,17 @@ Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/
 ## Data flow
 
 ```text
-forecast.zarr/ + models/*/  ──►  Python :8766  ──►  /api/zarr/*  ──►  MapLibre heat map
+models/*/  ──►  Python :8767  ──►  /api/zarr/*  ──►  Globe, map, city trends
                                                                       (selected model)
-
-Bundled JSON / Colab zip  ──►  React (globe + city trends: temp + wind)
 ```
 
 | Mode | What the UI uses |
 | --- | --- |
-| Satellite-radar (default) | Selected local Zarr model via field API — cropped heat JPEG on MapLibre |
-| Globe | Bundled `forecastData.json` or uploaded Colab zip |
-| City trends | Selected local Zarr model; bundled / uploaded zip as fallback |
-| Model selector | Discovers available stores in `models/`; the selection updates map fields, city time series, and forecast timeline |
-| After Colab zip drop | Updates globe/city grids; MapLibre page continues to use the selected local Zarr model |
+| Satellite-radar | Selected local Zarr model via field API — cropped heat field on MapLibre |
+| Globe | Selected local Zarr model via field API |
+| City trends and popup | Selected local model's Zarr time series |
+| Model selector | Discovers available stores; selection updates all weather fields and the Zarr forecast timeline |
+| Missing fields or stores | Shown as unavailable/errors; no synthetic or bundled forecast fallback |
 
 ## UI features
 
@@ -135,23 +164,23 @@ Bundled JSON / Colab zip  ──►  React (globe + city trends: temp + wind)
 | --- | --- |
 | Default view | **3D satellite globe** |
 | MapLibre layers | All zarr variables + derived `wind10m`; Burmese chips |
-| Heat overlay | Fixed SE Asia / BoB crop — stays visible while zooming and playing |
-| Zoom | Min ~**4.15**, max **10**; pan limited to the storm-basin box |
+| Heat overlay | Loads the selected model's current map viewport; refreshes after pan and zoom |
+| Zoom | Min **3.5**, max **12**; panning is not restricted to the storm-basin box |
 | City pins | MapLibre dots + labels; click to select (no auto city-tour on this page) |
 | Playback | Timeline · `Space` · `←`/`→` · speeds **0.5x … 10x** · `F` fullscreen |
 | Time labels | Burmese windows, e.g. `၃-၁၁-၂၀၂၆ (၀၀:၀၀ မှ ၀၆:၀၀)` |
-| City tour | Globe / city-trends only — radar page keeps the selected city fixed |
-| Load Colab zip | Header upload or drag-drop (globe / city data) |
+| City selection | Selects a geographic location; displayed forecast values load from the selected Zarr model |
+| Humidity data | Zarr `q850` and `tcwv` only; no estimated relative humidity or dew point |
 | Storm HUD | **not wired** |
 
 ## Local model stores
 
-1. Copy the Earth-2 store to project-root `forecast.zarr/`; add other models under `models/<model-id>/` (or `models/<model-id>/forecast.zarr/`).
-2. The API discovers Earth-2-style stores and Pangu6 stores nested as `models/Pangu6/<store>.zarr/`. Pangu6 stores use root `model`, `initialization_utc`, and `forecast_lead_hours` attributes with global `[time, lead, lat, lon]` arrays.
-3. Keep these large local folders uncommitted; both locations are listed in `.gitignore`.
+1. Put supported stores under `models/<model-id>/`, including nested stores such as `models/Pangu6/<store>.zarr/`.
+2. The API discovers supported stores recursively, validates their Zarr metadata, and lists each store in the model selector. Pangu6 stores use root `model`, `initialization_utc`, and `forecast_lead_hours` attributes with global `[time, lead, lat, lon]` arrays.
+3. Keep these large local folders uncommitted; `models/` is listed in `.gitignore`.
 4. The field API serves **viewport/region crops** as JSON; the browser never loads the whole store.
 
-Health check: `http://127.0.0.1:8766/api/health`
+Health check: `http://127.0.0.1:8767/api/health`
 
 The optional GFS forecast-generation pipeline has additional, much larger dependencies. Install them only if you use `backend/fourcastnet_pipeline.py`:
 
@@ -159,23 +188,7 @@ The optional GFS forecast-generation pipeline has additional, much larger depend
 .\.venv\Scripts\python.exe -m pip install -r backend\requirements-pipeline.txt
 ```
 
-## Make a new Colab forecast zip (globe / city)
-
-Notebook: [`notebook/NVIDIA_Earth2_GPU_Colab_Myanmar.ipynb`](notebook/NVIDIA_Earth2_GPU_Colab_Myanmar.ipynb)
-
-This zip path feeds the **globe** and provides fallback metrics for **city trends** (temp + wind). It does **not** replace the selected local model for MapLibre.
-
-1. Upload to [Google Colab](https://colab.research.google.com/) → **GPU** runtime.  
-2. Run install → restart → imports → Gradio forecast.  
-3. Download `NVIDIA_FCN_Myanmar_*_Forecast.zip`.  
-4. Drop it on the local UI header at http://localhost:5180.
-
-| Notebook output | Globe / city UI |
-| --- | --- |
-| `t2m` → `temperature_c` (°C) | temperature maps, city °C |
-| `u10m` + `v10m` → `wind_kmh` | wind maps, city km/h |
-| Lat **29°N → 9°N**, Lon **92°E → 102°E**, 0.25° | `sampleGrid` in `src/utils/geo.ts` |
-| 12 cities | `src/data/forecastData.json` + `src/utils/burmese.ts` |
+The optional Colab notebook is not connected to the dashboard. Forecast uploads are not displayed; put data in a supported local Zarr folder instead.
 
 MapLibre city pins (15 state/region capitals) — coords in `src/data/myanmarCities.ts`; °C sampled from the selected model's `t2m`:
 
@@ -199,19 +212,18 @@ MapLibre city pins (15 state/region capitals) — coords in `src/data/myanmarCit
 
 ## Storm alert (honest summary)
 
-The Colab notebook can still write `storm_alert.json` (BoB peak wind ≥ **65 km/h**). The zip parser may keep it; **this UI does not render a cyclone card**. Express does **not** expose `/api/storm-alert`.
+The optional notebook can write `storm_alert.json` (BoB peak wind ≥ **65 km/h**), but the dashboard does not read or render it. Express does **not** expose `/api/storm-alert`.
 
 ## Bounds
 
 | Name | Value |
 | --- | --- |
-| MapLibre default frame | ~Lon **78–112°E**, Lat **2–28.5°N** (SE Asia + BoB + Andaman) |
-| MapLibre max zoom-out | minZoom **~4.15**, hard maxBounds around that basin |
-| Heat crop (API) | ~Lon **74–116°E**, Lat **0.5–30.5°N** (fixed so play/zoom keep the overlay) |
-| Bundled Colab crop | Lat **9–29°N**, Lon **92–102°E** |
-| Zarr leads | typically **0 … 168** h every 6 h (29 steps) when using `forecast.zarr` |
-| Model fields (MapLibre) | full Earth-2 variable set listed above |
-| Model fields (globe / city zip) | **2 m temperature**, **10 m wind** only |
+| MapLibre initial view | SE Asia + Bay of Bengal, fitted to ~78–130°E and 5°S–35°N |
+| MapLibre zoom / pan | zoom **3.5–12**; global panning |
+| Heat crop (API) | Follows the current viewport; refetched after map movement |
+| Globe temperature crop | Lat **9–29°N**, Lon **92–102°E** from selected Zarr store |
+| Zarr leads | Read from the selected store's metadata; each model may have different lead hours |
+| Model fields | Available fields in the selected Zarr store |
 
 ## References
 

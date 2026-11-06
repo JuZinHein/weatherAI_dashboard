@@ -1,5 +1,5 @@
 /**
- * Display catalog for forecast.zarr variables (city trends + shared labels).
+ * Display catalog for local Zarr variables (city trends + shared labels).
  * Burmese copy: keep in sync with `ZARR_VAR_LABELS_MM` in zarrApi.ts
  * (that map is the single source used on every page).
  */
@@ -24,36 +24,36 @@ export const WEATHER_CATEGORIES: WeatherCategory[] = [
     id: 'temperature',
     labelEn: 'Temperature',
     labelMm: 'အပူချိန်',
-    descriptionMm: 'forecast.zarr အပူချိန် အလွှာများ',
+    descriptionMm: 'မော်ဒယ် Zarr အပူချိန် အလွှာများ',
   },
   {
     id: 'pressure',
     labelEn: 'Pressure',
     labelMm: 'လေဖိအား',
-    descriptionMm: 'forecast.zarr လေဖိအား',
+    descriptionMm: 'မော်ဒယ် Zarr လေဖိအား',
   },
   {
     id: 'humidity',
     labelEn: 'Humidity / moisture',
     labelMm: 'စိုထိုင်းဆ',
-    descriptionMm: 'forecast.zarr စိုထိုင်းဆ / ရေငွေ့',
+    descriptionMm: 'မော်ဒယ် Zarr စိုထိုင်းဆ / ရေငွေ့',
   },
   {
     id: 'wind',
     labelEn: 'Wind',
     labelMm: 'လေ',
-    descriptionMm: 'forecast.zarr လေတိုက်နှုန်း / လေအစိတ်အပိုင်း',
+    descriptionMm: 'မော်ဒယ် Zarr လေတိုက်နှုန်း / လေအစိတ်အပိုင်း',
   },
   {
     id: 'height',
     labelEn: 'Height',
     labelMm: 'လေထုဖိအားအမြင့်',
-    descriptionMm: 'forecast.zarr ၅၀၀ hPa လေထုဖိအားအမြင့်',
+    descriptionMm: 'မော်ဒယ် Zarr ၅၀၀ hPa လေထုဖိအားအမြင့်',
   },
 ];
 
 export interface WeatherVariableDef {
-  /** Same id as forecast.zarr / MapLibre chips (t2m, wind10m, …) */
+  /** Same id as Zarr arrays / MapLibre chips (t2m, wind10m, …) */
   id: string;
   categoryId: WeatherCategoryId;
   labelEn: string;
@@ -68,7 +68,7 @@ export interface WeatherVariableDef {
   descriptionMm: string;
 }
 
-/** All Earth-2 variables available from local forecast.zarr */
+/** Variables supported by local stores; each is reported only when present. */
 export const WEATHER_VARIABLES: WeatherVariableDef[] = [
   {
     id: 't1000',
@@ -219,9 +219,3 @@ export const WEATHER_VARIABLES: WeatherVariableDef[] = [
 export const WEATHER_VARIABLES_BY_ID: Record<string, WeatherVariableDef> = Object.fromEntries(
   WEATHER_VARIABLES.map((v) => [v.id, v])
 );
-
-/** Legacy zip metric ids → zarr ids (bundled cityForecasts still use these) */
-export const LEGACY_METRIC_TO_ZARR: Record<string, string> = {
-  temperature_2m: 't2m',
-  wind_speed_10m: 'wind10m',
-};

@@ -64,15 +64,13 @@ FOURCASTNET_CHANNELS = [
 
 
 class FourCastNetPipeline:
-    def __init__(self, ngc_api_key=None, nim_endpoint=None, simulate_cyclone=False):
+    def __init__(self, ngc_api_key=None, nim_endpoint=None):
         self.ngc_api_key = ngc_api_key or os.getenv("NGC_API_KEY") or os.getenv("NVIDIA_API_KEY")
         self.nim_endpoint = (
             nim_endpoint
             or os.getenv("NIM_ENDPOINT")
             or "https://ai.api.nvidia.com/v1/genai/nvidia/fourcastnet-v2"
         )
-        self.simulate_cyclone = simulate_cyclone
-
         ASSET_DIR.mkdir(parents=True, exist_ok=True)
         LAYERS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -108,23 +106,14 @@ class FourCastNetPipeline:
             print(f" -> Successfully downloaded GFS state with shape: {tensor_np.shape}")
             return tensor_np, cycle_dt
         except ImportError:
-            print(" [Notice] earth2studio not installed in current environment.")
-            print(" -> Demonstrating production pipeline with calibrated FourCastNet GFS state cache.")
-            return self._load_or_generate_cached_state(cycle_dt)
-        except Exception as e:
-            print(f" [Warning] GFS download error: {e}. Falling back to baseline state.")
-            return self._load_or_generate_cached_state(cycle_dt)
-
-    def _load_or_generate_cached_state(self, cycle_dt):
-        """Fallback to existing calibrated GFS data if earth2studio is not yet installed."""
-        npz_path = ASSET_DIR / "regional_forecast.npz"
-        data_json_path = PROJECT_ROOT / "src" / "data" / "forecastData.json"
-        
-        if data_json_path.exists():
-            with open(data_json_path, "r", encoding="utf-8") as f:
-                cached = json.load(f)
-            return cached, cycle_dt
-        return None, cycle_dt
+            raise RuntimeError(
+                "earth2studio is required to fetch GFS initial conditions; "
+                "no bundled forecast fallback is available."
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to fetch GFS initial conditions: {exc}"
+            ) from exc
 
     # =========================================================================
     # Step 2: NVIDIA NIM FourCastNet Inference
@@ -224,18 +213,6 @@ class FourCastNetPipeline:
             cropped_temp.append(cropped_t_step)
             cropped_wind.append(cropped_w_step)
 
-        # Inject simulated cyclone in Bay of Bengal if requested for testing alert
-        if self.simulate_cyclone:
-            print(" -> [SIMULATION ACTIVE] Injecting cyclonic vortex (> 65 km/h) into Bay of Bengal...")
-            # Lat ~15.5N (row ~54), Lon ~93.5E (col ~6)
-            for s in range(2, len(cropped_wind)):
-                for r in range(48, 62):
-                    for c in range(2, 12):
-                        dist = ((r - 54)**2 + (c - 6)**2)**0.5
-                        if dist < 6:
-                            wind_boost = max(0.0, 78.5 - dist * 6.5)
-                            cropped_wind[s][r][c] = round(max(cropped_wind[s][r][c], wind_boost), 2)
-
         print(f" -> Output grid dimensions: {len(lat_indices)} lat rows x {len(lon_indices)} lon cols (81x41)")
         return cropped_temp, cropped_wind
 
@@ -308,11 +285,10 @@ class FourCastNetPipeline:
 
         except ImportError:
             print(" [Notice] Matplotlib not in current Python path; delegating to high-speed raster renderer...")
-            # Use Node.js script or existing PNGs
-            import subprocess
-            js_script = PROJECT_ROOT / "scripts" / "generate_layers.ts"
-            if js_script.exists():
-                subprocess.run(["npx", "tsx", str(js_script)], check=False)
+            raise RuntimeError(
+                "Matplotlib is required to generate forecast layers; "
+                "the JSON-based layer fallback has been removed."
+            )
 
     # =========================================================================
     # Step 5: UI Configuration (forecast_config.js & json)
@@ -507,14 +483,12 @@ window.FORECAST_CONFIG = {json.dumps(config, indent=2)};
 def main():
     parser = argparse.ArgumentParser(description="NVIDIA FourCastNet Automated Pipeline")
     parser.add_argument("--api-key", help="NVIDIA NGC API Key for build.nvidia.com NIM inference")
-    parser.add_argument("--simulate-cyclone", action="store_true", help="Simulate Bay of Bengal cyclonic winds > 65 km/h")
     parser.add_argument("--cron", action="store_true", help="Run continuously on schedule (every 6 hours aligned with GFS)")
     parser.add_argument("--interval-hours", type=int, default=6, help="Interval in hours for scheduler loop")
 
     args = parser.parse_args()
     pipeline = FourCastNetPipeline(
         ngc_api_key=args.api_key,
-        simulate_cyclone=args.simulate_cyclone,
     )
 
     if args.cron:

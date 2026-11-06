@@ -13,8 +13,8 @@ export default defineConfig(() => {
     },
     server: {
       watch: {
-        // forecast.zarr is multi-GB; watching it floods Vite with EBUSY and freezes the UI
-        ignored: ['**/forecast.zarr/**', '**/*.zarr/**'],
+        // Model stores can be multi-GB and should not be watched by Vite.
+        ignored: ['**/*.zarr/**'],
       },
     },
   };

@@ -31,6 +31,17 @@ export const TimelineControls: React.FC<TimelineControlsProps> = ({
   const currentWindow = getStepTimeWindow(dataset.validTimesUtc, currentStepIndex);
   const longForecast = steps.length > 8;
 
+  if (!steps.length) {
+    return (
+      <div
+        role="status"
+        className="fixed bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-2xl border border-white/15 bg-black/70 px-4 py-3 text-xs text-slate-300 shadow-2xl backdrop-blur-xl"
+      >
+        Waiting for the selected local Zarr forecast…
+      </div>
+    );
+  }
+
   const handlePrev = () => {
     onSelectStepIndex((currentStepIndex - 1 + steps.length) % steps.length);
   };

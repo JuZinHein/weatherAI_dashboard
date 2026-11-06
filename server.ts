@@ -12,30 +12,53 @@ const app = express();
 // Dedicated local-showcase port — keep away from the normal app on :3000
 const PORT = Number(process.env.PORT) || 5180;
 const HOST = '0.0.0.0';
-// 8765 is often used by Nvidia_test_zarr_format/viewer — default aside for this app
-const ZARR_API_PORT = Number(process.env.ZARR_API_PORT) || 8766;
+const ZARR_API_PORT = Number(process.env.ZARR_API_PORT) || 8767;
 const ZARR_API_ORIGIN = `http://127.0.0.1:${ZARR_API_PORT}`;
 
 let zarrChild: ChildProcess | null = null;
 
-function probeZarrApi(): Promise<boolean> {
+function probeZarrApi(): Promise<'unavailable' | 'compatible' | 'foreign'> {
   return new Promise((resolve) => {
     const req = http.get(`${ZARR_API_ORIGIN}/api/health`, (res) => {
-      res.resume();
-      resolve((res.statusCode || 500) < 500);
+      const chunks: Buffer[] = [];
+      res.on('data', (chunk: Buffer) => chunks.push(chunk));
+      res.on('end', () => {
+        if ((res.statusCode || 500) >= 500) {
+          resolve('unavailable');
+          return;
+        }
+        try {
+          const health = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+            project_root?: string;
+          };
+          resolve(
+            health.project_root && path.resolve(health.project_root).toLowerCase() === __dirname.toLowerCase()
+              ? 'compatible'
+              : 'foreign',
+          );
+        } catch {
+          resolve('foreign');
+        }
+      });
     });
-    req.on('error', () => resolve(false));
+    req.on('error', () => resolve('unavailable'));
     req.setTimeout(800, () => {
       req.destroy();
-      resolve(false);
     });
   });
 }
 
 async function startZarrSidecar() {
-  if (await probeZarrApi()) {
+  const apiStatus = await probeZarrApi();
+  if (apiStatus === 'compatible') {
     console.log(`[zarr-api] Already running at ${ZARR_API_ORIGIN}`);
     return;
+  }
+  if (apiStatus === 'foreign') {
+    throw new Error(
+      `Port ${ZARR_API_PORT} is serving a different or incompatible Zarr API. ` +
+      'Stop that service or set ZARR_API_PORT to an unused port.',
+    );
   }
   const script = path.resolve(__dirname, 'backend', 'zarr_field_server.py');
   const venvPython = process.platform === 'win32'
@@ -84,7 +107,7 @@ function proxyToZarr(req: express.Request, res: express.Response) {
     res.status(503).json({
       error: 'Zarr field API unavailable',
       detail: String(err.message || err),
-      hint: `Start backend/zarr_field_server.py on port ${ZARR_API_PORT}, with forecast.zarr in the project root.`,
+      hint: `Start backend/zarr_field_server.py on port ${ZARR_API_PORT}, with supported stores under models/.`,
     });
   });
   req.pipe(upstream);
@@ -104,7 +127,7 @@ async function startServer() {
         host: HOST,
         port: PORT,
         watch: {
-          ignored: ['**/forecast.zarr/**', '**/*.zarr/**'],
+          ignored: ['**/*.zarr/**'],
         },
       },
       appType: 'spa',

@@ -2,7 +2,7 @@ import { CityInfo } from '../types/forecast';
 
 /**
  * Official state/region capitals used for MapLibre pins and city selection.
- * Temperatures on the satellite-radar page are sampled from forecast.zarr at these coords.
+ * Temperatures on the satellite-radar page are sampled from the selected model store.
  */
 export const MYANMAR_CITIES: CityInfo[] = [
   {

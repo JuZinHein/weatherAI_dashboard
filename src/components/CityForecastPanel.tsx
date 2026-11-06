@@ -76,6 +76,7 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
     setZarrStatus('loading');
     setMetaError('');
     setLoadError('');
+    if (!modelId) return () => ac.abort();
     fetchZarrMeta(modelId, ac.signal)
       .then((result) => {
         if (ac.signal.aborted) return;
@@ -283,7 +284,7 @@ export const CityForecastPanel: React.FC<CityForecastPanelProps> = ({
 
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-            forecast.zarr · မြို့ကြီးများ ခန့်မှန်းချက်
+            {modelId} Zarr · မြို့ကြီးများ ခန့်မှန်းချက်
           </span>
           <span className="text-xs font-mono text-emerald-400">
             {`${availableVariables.length} မျိုး · ${meta?.model ?? modelId} Zarr`}

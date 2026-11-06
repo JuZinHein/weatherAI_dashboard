@@ -8,9 +8,12 @@ coverage/
 !.env.example
 .aistudio/
 
-# Large Earth-2 global store (keep local only; do not commit)
+# Legacy root store; the dashboard only reads model stores under models/.
 forecast.zarr/
 /models/
 *.zarr.zip
 /data/uploaded_zarr/
 .venv/
+
+# Downloaded Esri imagery is local-only; keep it out of repository commits.
+public/basemap/offline/

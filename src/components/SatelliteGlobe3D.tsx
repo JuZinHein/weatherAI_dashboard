@@ -6,10 +6,13 @@ import { MYANMAR_BORDER_POINTS } from '../utils/geo';
 import { BURMESE_STRINGS, toBurmeseNumber, BURMESE_CITIES_MAP } from '../utils/burmese';
 import { getStepTimeWindow } from '../utils/forecastTime';
 import { CityWeatherPopup3D } from './CityWeatherPopup3D';
-import { Compass, Cloud, Flame, RotateCw, ZoomIn, ZoomOut, Maximize2, Minimize2 } from 'lucide-react';
+import { Compass, Flame, RotateCw, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { fetchZarrField, fetchZarrMeta, type ZarrField } from '../services/zarrApi';
+import { MYANMAR_CITIES } from '../data/myanmarCities';
 
 interface SatelliteGlobe3DProps {
   dataset: ForecastDataset;
+  modelId: string;
   currentStepIndex: number;
   selectedCity: CityInfo;
   onSelectCity: (city: CityInfo) => void;
@@ -32,6 +35,7 @@ export function latLonToSphere(lat: number, lon: number, radius = 1.8): THREE.Ve
 
 export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
   dataset,
+  modelId,
   currentStepIndex,
   selectedCity,
   onSelectCity,
@@ -42,7 +46,6 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
   // Pure Daytime Satellite High-Resolution Globe
   /** Weather radar overlay — off until the user toggles မိုးလေဝသ ရေဒါ */
   const [showRadar, setShowRadar] = useState(false);
-  const [showClouds, setShowClouds] = useState(true);
   const [autoRotate, setAutoRotate] = useState(true);
   /** OrbitControls autoRotateSpeed — lower = slower Earth spin (default slowed from 0.35 → 0.12) */
   const [rotateSpeed, setRotateSpeed] = useState(0.12);
@@ -56,7 +59,6 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
   const controlsRef = useRef<OrbitControls | null>(null);
 
   const earthMeshRef = useRef<THREE.Mesh | null>(null);
-  const cloudsMeshRef = useRef<THREE.Mesh | null>(null);
   const radarMeshRef = useRef<THREE.Mesh | null>(null);
   const radarTextureRef = useRef<THREE.CanvasTexture | null>(null);
   const cityPinsRef = useRef<{ mesh: THREE.Mesh; halo: THREE.Mesh; sprite: THREE.Sprite; city: CityInfo }[]>([]);
@@ -91,6 +93,72 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
 
   // Textures cache
   const texturesCacheRef = useRef<Record<string, THREE.Texture>>({});
+  const [weatherVariable, setWeatherVariable] = useState('');
+  const [weatherField, setWeatherField] = useState<ZarrField | null>(null);
+  const [weatherFieldError, setWeatherFieldError] = useState('');
+  const [isWeatherFieldLoading, setIsWeatherFieldLoading] = useState(false);
+
+  const leadHour = dataset.leadHours[currentStepIndex] ?? 0;
+
+  useEffect(() => {
+    if (!modelId) return;
+    const controller = new AbortController();
+    setWeatherVariable('');
+    setWeatherField(null);
+    setWeatherFieldError('');
+    setIsWeatherFieldLoading(true);
+
+    fetchZarrMeta(modelId, controller.signal)
+      .then((meta) => {
+        const variable = meta.available_variables.includes('t2m')
+          ? 't2m'
+          : meta.available_variables.includes('t1000')
+            ? 't1000'
+            : null;
+        if (!variable) {
+          throw new Error(`No 2 m or 1000 hPa temperature field is available in ${modelId} Zarr.`);
+        }
+        if (!controller.signal.aborted) setWeatherVariable(variable);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') return;
+        if (!controller.signal.aborted) {
+          setWeatherFieldError(error instanceof Error ? error.message : String(error));
+          setIsWeatherFieldLoading(false);
+        }
+      })
+    return () => controller.abort();
+  }, [modelId]);
+
+  useEffect(() => {
+    if (!weatherVariable) return;
+    const controller = new AbortController();
+    setWeatherField(null);
+    setWeatherFieldError('');
+    setIsWeatherFieldLoading(true);
+
+    fetchZarrField({
+      modelId,
+      variable: weatherVariable,
+      leadHour,
+      bbox: { west: 92, south: 9, east: 102, north: 29 },
+      signal: controller.signal,
+    })
+      .then((field) => {
+        if (!controller.signal.aborted) setWeatherField(field);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') return;
+        if (!controller.signal.aborted) {
+          setWeatherFieldError(error instanceof Error ? error.message : String(error));
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsWeatherFieldLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [leadHour, modelId, weatherVariable]);
 
   // 1. INITIALIZE THREE.JS SCENE ONCE ON MOUNT (Zero stops/pauses during playback)
   useEffect(() => {
@@ -248,42 +316,6 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
     radarMeshRef.current = rMesh;
     scene.add(rMesh);
 
-    // Planetary Clouds Layer
-    const cloudCanvas = document.createElement('canvas');
-    cloudCanvas.width = 2048;
-    cloudCanvas.height = 1024;
-    const cCtx = cloudCanvas.getContext('2d')!;
-    cCtx.clearRect(0, 0, 2048, 1024);
-
-    cCtx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-    for (let i = 0; i < 180; i++) {
-      const cx = Math.random() * 2048;
-      const cy = Math.random() * 1024;
-      const cr = 30 + Math.random() * 90;
-      const grad = cCtx.createRadialGradient(cx, cy, 0, cx, cy, cr);
-      grad.addColorStop(0, 'rgba(255, 255, 255, 0.55)');
-      grad.addColorStop(0.45, 'rgba(255, 255, 255, 0.25)');
-      grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-      cCtx.fillStyle = grad;
-      cCtx.beginPath();
-      cCtx.arc(cx, cy, cr, 0, Math.PI * 2);
-      cCtx.fill();
-    }
-    const cloudTexture = new THREE.CanvasTexture(cloudCanvas);
-    cloudTexture.colorSpace = THREE.SRGBColorSpace;
-
-    const cloudGeo = new THREE.SphereGeometry(1.824, 64, 64);
-    const cloudMat = new THREE.MeshStandardMaterial({
-      map: cloudTexture,
-      transparent: true,
-      opacity: 0.35,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    const cloudMesh = new THREE.Mesh(cloudGeo, cloudMat);
-    cloudsMeshRef.current = cloudMesh;
-    scene.add(cloudMesh);
-
     // Myanmar National Border
     const borderPoints3D: THREE.Vector3[] = MYANMAR_BORDER_POINTS.map(([lon, lat]) =>
       latLonToSphere(lat, lon, 1.815)
@@ -301,11 +333,9 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
     const cityGroup = new THREE.Group();
     const cityPins: { mesh: THREE.Mesh; halo: THREE.Mesh; sprite: THREE.Sprite; city: CityInfo }[] = [];
 
-    dataset.cityForecasts.forEach((city) => {
+    MYANMAR_CITIES.forEach((city) => {
       const pinPos = latLonToSphere(city.lat, city.lon, 1.822);
       const isSelected = city.name === selectedCity.name;
-      const currentF = city.forecasts[0];
-      const tempVal = Math.round(currentF?.temperatureC ?? 28);
 
       // 1. Large Invisible Hit-Sphere for effortless click/touch target
       const hitGeo = new THREE.SphereGeometry(0.048, 8, 8);
@@ -369,7 +399,7 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
       lCtx.textAlign = 'center';
       lCtx.textBaseline = 'middle';
       const mmCity = city.mmName || BURMESE_CITIES_MAP[city.name]?.mmName || city.name;
-      lCtx.fillText(`${mmCity} · ${toBurmeseNumber(tempVal)}°C`, 220, 48);
+      lCtx.fillText(mmCity, 220, 48);
 
       const labelTex = new THREE.CanvasTexture(labelCanvas);
       labelTex.colorSpace = THREE.SRGBColorSpace;
@@ -464,10 +494,6 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
         }
       }
 
-      if (cloudsMeshRef.current) {
-        cloudsMeshRef.current.rotation.y += delta * 0.012;
-      }
-
       // Responsive zoom scaling: As user zooms in (camera approaches globe surface),
       // scale city names and beacon dots gracefully down so they remain refined, sharp,
       // and never clutter or block neighboring regions!
@@ -502,70 +528,41 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
     };
   }, []); // Run ONCE on mount! Scene never tears down!
 
-  // 2. DYNAMIC WEATHER RADAR CANVAS UPDATE (Lightweight, zero scene interruption)
+  // Render the selected Zarr temperature field on the globe.
   useEffect(() => {
     if (!radarTextureRef.current) return;
     const canvas = radarTextureRef.current.image as HTMLCanvasElement;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    const tempGrid = dataset.temperatureGrid[currentStepIndex] || dataset.temperatureGrid[0];
-    const windGrid = dataset.windGrid[currentStepIndex] || dataset.windGrid[0];
-
-    const off = document.createElement('canvas');
-    off.width = canvas.width;
-    off.height = canvas.height;
-    const offCtx = off.getContext('2d')!;
-
-    for (let r = 0; r < 81; r += 2) {
-      for (let c = 0; c < 41; c += 2) {
-        const tempVal = tempGrid[r][c];
-        const windVal = windGrid[r][c];
-
-        const lat = 29.0 - r * 0.25;
-        const lon = 92.0 + c * 0.25;
-
-        const px = ((lon + 180) / 360) * off.width;
-        const py = ((90 - lat) / 180) * off.height;
-
-        let radius = 18 + (windVal / 22) * 24;
-        let coreColor = '';
-        let outerColor = '';
-
-        if (windVal > 15 || (tempVal > 30.5 && r > 22)) {
-          coreColor = windVal > 18 ? 'rgba(239, 68, 68, 0.62)' : 'rgba(245, 158, 11, 0.58)';
-          outerColor = 'rgba(16, 185, 129, 0.38)';
-        } else if (windVal > 8.5 || tempVal > 27.5) {
-          coreColor = 'rgba(52, 211, 153, 0.48)';
-          outerColor = 'rgba(56, 189, 248, 0.28)';
-        } else if (tempVal < 15) {
-          coreColor = 'rgba(186, 230, 253, 0.45)';
-          outerColor = 'rgba(56, 189, 248, 0.20)';
-          radius = 18;
-        }
-
-        if (coreColor) {
-          const grad = offCtx.createRadialGradient(px, py, 1, px, py, radius);
-          grad.addColorStop(0, coreColor);
-          grad.addColorStop(0.4, outerColor);
-          grad.addColorStop(0.8, 'rgba(56, 189, 248, 0.10)');
-          grad.addColorStop(1, 'rgba(56, 189, 248, 0)');
-
-          offCtx.fillStyle = grad;
-          offCtx.beginPath();
-          offCtx.arc(px, py, radius, 0, Math.PI * 2);
-          offCtx.fill();
+    if (weatherField) {
+      const fieldParts = weatherField.parts?.length ? weatherField.parts : [weatherField];
+      const values = fieldParts.flatMap((part) => part.values.flat()).filter(Number.isFinite);
+      const min = values.length ? Math.min(...values) : 0;
+      const max = values.length ? Math.max(...values) : 1;
+      for (const part of fieldParts) {
+        const lats = part.lats ?? weatherField.lats;
+        const lons = part.lons ?? weatherField.lons;
+        if (!lats.length || !lons.length) continue;
+        const cellWidth = (Math.abs(lons[1] - lons[0] || 0.25) / 360) * canvas.width + 1;
+        const cellHeight = (Math.abs(lats[1] - lats[0] || 0.25) / 180) * canvas.height + 1;
+        for (let row = 0; row < Math.min(lats.length, part.values.length); row++) {
+          for (let col = 0; col < Math.min(lons.length, part.values[row]?.length ?? 0); col++) {
+            const value = part.values[row][col];
+            if (!Number.isFinite(value)) continue;
+            const ratio = max === min ? 0.5 : (value - min) / (max - min);
+            const x = ((lons[col] + 180) / 360) * canvas.width;
+            const y = ((90 - lats[row]) / 180) * canvas.height;
+            const red = Math.round(255 * Math.max(0, Math.min(1, ratio * 2)));
+            const blue = Math.round(255 * Math.max(0, Math.min(1, 2 - ratio * 2)));
+            ctx.fillStyle = `rgba(${red}, 80, ${blue}, 0.58)`;
+            ctx.fillRect(x - cellWidth / 2, y - cellHeight / 2, cellWidth, cellHeight);
+          }
         }
       }
     }
-
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(off, 0, 0);
     radarTextureRef.current.needsUpdate = true;
-  }, [dataset, currentStepIndex]);
+  }, [weatherField]);
 
   // 3. UPDATE PIN HIGHLIGHT WHEN SELECTED CITY CHANGES (Zero scene teardown, no camera movement)
   useEffect(() => {
@@ -579,12 +576,6 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
   }, [selectedCity]);
 
 
-
-  useEffect(() => {
-    if (cloudsMeshRef.current) {
-      cloudsMeshRef.current.visible = showClouds;
-    }
-  }, [showClouds]);
 
   useEffect(() => {
     if (radarMeshRef.current) {
@@ -621,8 +612,8 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
       {activePopupCity && (
         <CityWeatherPopup3D
           city={activePopupCity}
-          validTimesUtc={dataset.validTimesUtc}
-          currentStepIndex={currentStepIndex}
+          modelId={modelId}
+          leadHour={leadHour}
           onClose={() => setActivePopupCity(null)}
           onSelectCity={(c) => {
             onSelectCity(c);
@@ -630,6 +621,15 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
           }}
           isSelectedCity={activePopupCity.name === selectedCity.name}
         />
+      )}
+
+      {(isWeatherFieldLoading || weatherFieldError) && (
+        <div
+          role={weatherFieldError ? 'alert' : 'status'}
+          className="pointer-events-none absolute bottom-28 left-1/2 z-20 -translate-x-1/2 rounded-full border border-white/15 bg-black/75 px-3 py-1.5 text-[11px] text-slate-200 shadow-lg backdrop-blur-xl"
+        >
+          {weatherFieldError ? `Zarr field: ${weatherFieldError}` : 'Loading Zarr temperature field…'}
+        </div>
       )}
 
       {/* Minimal Top Forecast Time HUD */}
@@ -709,17 +709,6 @@ export const SatelliteGlobe3D: React.FC<SatelliteGlobe3DProps> = ({
             title="မိုးလေဝသ ရေဒါ"
           >
             <Flame className="h-3.5 w-3.5" />
-          </button>
-
-          {/* Clouds Toggle */}
-          <button
-            onClick={() => setShowClouds((v) => !v)}
-            className={`flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs font-medium transition ${
-              showClouds ? 'bg-sky-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
-            }`}
-            title="ဂြိုဟ်တု တိမ်လွှာ"
-          >
-            <Cloud className="h-3.5 w-3.5" />
           </button>
 
           <div className="h-4 w-px bg-white/20" />

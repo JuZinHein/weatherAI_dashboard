@@ -10,7 +10,7 @@ const venvPython = process.platform === 'win32'
 const python = process.env.PYTHON || (existsSync(venvPython) ? venvPython : 'python');
 const server = spawn(python, [path.join(root, 'backend', 'zarr_field_server.py')], {
   cwd: root,
-  env: process.env,
+  env: { ...process.env, ZARR_API_PORT: process.env.ZARR_API_PORT || '8767' },
   stdio: 'inherit',
 });
 

@@ -1,4 +1,4 @@
-/** Client for the local forecast.zarr field API (proxied via /api/zarr). */
+/** Client for the selected local model's Zarr field API (proxied via /api/zarr). */
 
 export type ZarrVarMeta = {
   label: string;
@@ -94,7 +94,7 @@ export const ZARR_VAR_LABELS_MM: Record<string, string> = {
   z500: '၅၀၀ hPa လေထုဖိအားအမြင့်',
 };
 
-export async function fetchZarrMeta(modelId = 'earth2', signal?: AbortSignal): Promise<ZarrMeta> {
+export async function fetchZarrMeta(modelId: string, signal?: AbortSignal): Promise<ZarrMeta> {
   const params = new URLSearchParams({ model: modelId });
   const res = await fetch(`/api/zarr/meta?${params}`, { signal });
   if (!res.ok) {
@@ -105,7 +105,7 @@ export async function fetchZarrMeta(modelId = 'earth2', signal?: AbortSignal): P
 }
 
 export async function fetchZarrField(opts: {
-  modelId?: string;
+  modelId: string;
   variable: string;
   leadHour: number;
   ensemble?: string;
@@ -113,7 +113,7 @@ export async function fetchZarrField(opts: {
   signal?: AbortSignal;
 }): Promise<ZarrField> {
   const params = new URLSearchParams({
-    model: opts.modelId ?? 'earth2',
+    model: opts.modelId,
     variable: opts.variable,
     region: 'global',
     lead_hour: String(opts.leadHour),
@@ -145,7 +145,7 @@ export type ZarrTimeseries = {
 
 /** City point timeseries for one variable across all lead hours */
 export async function fetchZarrTimeseries(opts: {
-  modelId?: string;
+  modelId: string;
   variable: string;
   points: { name: string; lat: number; lon: number }[];
   ensemble?: string;
@@ -155,7 +155,7 @@ export async function fetchZarrTimeseries(opts: {
     .map((p) => `${p.name}:${p.lat}:${p.lon}`)
     .join(';');
   const params = new URLSearchParams({
-    model: opts.modelId ?? 'earth2',
+    model: opts.modelId,
     variable: opts.variable,
     ensemble: opts.ensemble ?? 'mean',
     points,

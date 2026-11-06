@@ -52,14 +52,6 @@ export const ShowcaseHeader: React.FC<ShowcaseHeaderProps> = ({
           <div className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
             <Cpu className="h-4 w-4 sm:h-5 sm:w-5" />
           </div>
-          <span
-            className="font-display text-sm sm:text-base font-bold tracking-tight text-white truncate"
-            title={BURMESE_STRINGS.appTitle}
-          >
-            <span className="sm:hidden">FourCastNet</span>
-            <span className="hidden sm:inline lg:hidden">NVIDIA FourCastNet</span>
-            <span className="hidden lg:inline">{BURMESE_STRINGS.appTitle}</span>
-          </span>
         </div>
 
         {/* View modes — centered, can shrink / hide labels */}
@@ -102,11 +94,11 @@ export const ShowcaseHeader: React.FC<ShowcaseHeaderProps> = ({
 
           {validMyanmarTime && (
             <div
-              className="hidden 2xl:flex max-w-[16rem] items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-950/40 px-2.5 py-1 text-[11px] text-emerald-300"
+              className="hidden 2xl:flex w-64 shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-950/40 px-2.5 py-1 text-[11px] text-emerald-300"
               title={validMyanmarTime}
             >
               <Clock className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-              <span className="font-mono truncate">{validMyanmarTime}</span>
+              <span className="min-w-0 flex-1 font-mono truncate">{validMyanmarTime}</span>
             </div>
           )}
 

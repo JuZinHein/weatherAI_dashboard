@@ -171,6 +171,11 @@ function currentMapBbox(
   north += latPad;
   west -= lonPad;
   east += lonPad;
+  // A single bbox cannot represent a viewport crossing ±180; load both
+  // hemispheres so the wrapped side of the map keeps its forecast overlay.
+  if (west < DISPLAY_BOUNDS.west || east > DISPLAY_BOUNDS.east) {
+    return { ...FALLBACK_BBOX };
+  }
   const clamped = clampToDisplay({ west, south, east, north });
   if (clamped.east <= clamped.west || clamped.north <= clamped.south) {
     return { ...FALLBACK_BBOX };
@@ -376,12 +381,38 @@ function barGradient(cmapName: string): string {
     .join(', ')})`;
 }
 
-function satelliteStyle(): maplibregl.StyleSpecification {
+function offlineFallbackStyle(): maplibregl.StyleSpecification {
   return {
     version: 8,
-    name: 'esri-satellite',
-    glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+    name: 'offline-fallback',
     sources: {
+      offline: {
+        type: 'raster',
+        tiles: [`${import.meta.env.BASE_URL}basemap/offline/{z}/{x}/{y}.jpg`],
+        tileSize: 256,
+        maxzoom: 5,
+        attribution: 'Tiles © Esri',
+      },
+    },
+    layers: [
+      { id: 'offline-background', type: 'background', paint: { 'background-color': '#dbe7e8' } },
+      {
+        id: 'offline-basemap',
+        type: 'raster',
+        source: 'offline',
+        layout: { visibility: 'visible' },
+      },
+    ],
+  };
+}
+
+function satelliteStyle(online: boolean): maplibregl.StyleSpecification {
+  const fallback = offlineFallbackStyle();
+  return {
+    ...fallback,
+    name: 'satellite-with-offline-fallback',
+    sources: {
+      ...fallback.sources,
       satellite: {
         type: 'raster',
         tiles: [
@@ -393,10 +424,12 @@ function satelliteStyle(): maplibregl.StyleSpecification {
       },
     },
     layers: [
+      ...fallback.layers,
       {
-        id: 'satellite',
+        id: 'satellite-basemap',
         type: 'raster',
         source: 'satellite',
+        layout: { visibility: online ? 'visible' : 'none' },
         paint: { 'raster-opacity': 1 },
       },
     ],
@@ -447,6 +480,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
   const mapHostRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const fieldReadyRef = useRef(false);
+  const offlineBasemapRef = useRef(!navigator.onLine);
   const abortRef = useRef<AbortController | null>(null);
   const tempAbortRef = useRef<AbortController | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
@@ -486,6 +520,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     setField(null);
     setTempField(null);
     setError(null);
+    if (!modelId) return;
     fetchZarrMeta(modelId, ac.signal)
       .then((m) => {
         setMeta(m);
@@ -508,7 +543,7 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
 
     const map = new maplibregl.Map({
       container: mapHostRef.current,
-      style: satelliteStyle(),
+      style: satelliteStyle(navigator.onLine),
       center: [100.0, 22.0],
       zoom: 4.2,
       minZoom: MIN_ZOOM,
@@ -526,7 +561,26 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     mapRef.current = map;
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
 
+    const updateBasemap = (offline: boolean) => {
+      offlineBasemapRef.current = offline;
+      if (map.getLayer('satellite-basemap')) {
+        map.setLayoutProperty('satellite-basemap', 'visibility', offline ? 'none' : 'visible');
+      }
+      if (map.getLayer('offline-basemap')) {
+        map.setLayoutProperty('offline-basemap', 'visibility', offline ? 'visible' : 'none');
+      }
+    };
+    const onOffline = () => updateBasemap(true);
+    const onOnline = () => updateBasemap(false);
+    const onMapError = (event: { sourceId?: string }) => {
+      if (!navigator.onLine || event.sourceId === 'satellite') updateBasemap(true);
+    };
+    window.addEventListener('offline', onOffline);
+    window.addEventListener('online', onOnline);
+    map.on('error', onMapError);
+
     map.on('load', async () => {
+      updateBasemap(offlineBasemapRef.current);
       fieldReadyRef.current = true;
       // Dual image sources (a/b) — usually only "a" is used for regional crops
       const blank = extentCoords(BLANK_EXTENT);
@@ -632,6 +686,9 @@ export const ForecastMap2D: React.FC<ForecastMap2DProps> = ({
     map.on('zoomend', scheduleViewportRefresh);
 
     return () => {
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('online', onOnline);
+      map.off('error', onMapError);
       window.removeEventListener('resize', onWinResize);
       window.clearInterval(borderPulseTimer);
       if (viewportTimerRef.current != null) window.clearTimeout(viewportTimerRef.current);

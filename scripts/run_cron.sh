@@ -29,8 +29,8 @@ if command -v python3 &>/dev/null; then
     echo "[CRON] Executing Python FourCastNet pipeline..."
     python3 "$APP_DIR/backend/fourcastnet_pipeline.py"
 else
-    echo "[CRON] python3 not found, falling back to high-speed Node.js asset pipeline..."
-    npx tsx "$APP_DIR/scripts/generate_layers.ts"
+    echo "[CRON] python3 is required to run the forecast pipeline." >&2
+    exit 1
 fi
 
 echo "[CRON] Pipeline completed successfully: $(date -u)"

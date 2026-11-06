@@ -6,6 +6,7 @@ Serves /api/models, /api/meta, /api/timeseries, and /api/field.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -17,9 +18,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 # Local_NVIDIA_FourCastNet_Myanmar_AI_Weather_Showcase/
 ROOT = Path(__file__).resolve().parents[1]
-ZARR_PATH = Path(__file__).resolve().parent.parent / "forecast.zarr"
-if not ZARR_PATH.exists():
-    ZARR_PATH = ROOT / "forecast.zarr"
 
 REGIONS = {
     "global": {
@@ -236,28 +234,17 @@ PANGU_VARS: dict[str, dict[str, Any]] = {
     },
 }
 
-MODELS: dict[str, dict[str, Any]] = {
-    "earth2": {
-        "id": "earth2",
-        "label": "Earth-2 (global ensemble)",
-        "short": "Earth-2",
-        "path": ZARR_PATH,
-        "source_relative": "forecast.zarr",
-        "layout": "ens_time_lead_lat_lon",
-        "ensemble_size": 4,
-        "has_ensemble": True,
-        "reconstruct_lat": None,
-        "default_region": "global",
-        "regions": ["global", "southeast_asia", "bay_of_bengal", "andaman_sea", "myanmar"],
-        "variables": EARTH2_VARS,
-        "absent": [],
-        "notes": [
-            "Global 0.25° Earth-2 ensemble from Local showcase forecast.zarr folder.",
-            "MapLibre page frames SE Asia + Bay of Bengal + Andaman Sea.",
-            "wind10m derived from u10m/v10m; z500 converted geopotential→height.",
-        ],
-    },
+MODEL_TEMPLATE: dict[str, Any] = {
+    "layout": "ens_time_lead_lat_lon",
+    "ensemble_size": 4,
+    "has_ensemble": True,
+    "reconstruct_lat": None,
+    "default_region": "global",
+    "regions": ["global", "southeast_asia", "bay_of_bengal", "andaman_sea", "myanmar"],
+    "variables": EARTH2_VARS,
 }
+
+MODELS: dict[str, dict[str, Any]] = {}
 
 
 def _is_pangu_store(path: Path) -> bool:
@@ -290,48 +277,51 @@ def _is_zarr_store(path: Path) -> bool:
 
 
 def _discover_models() -> None:
-    """Register supported Zarr stores beneath models/, including nested .zarr stores."""
+    """Register supported Zarr stores beneath models/, including nested stores."""
     models_dir = ROOT / "models"
-    discovered_ids: set[str] = set()
-    template = MODELS["earth2"]
+    discovered: dict[str, dict[str, Any]] = {}
     if models_dir.is_dir():
         for folder in sorted(models_dir.iterdir(), key=lambda item: item.name.lower()):
             if not folder.is_dir():
                 continue
-            candidates = [folder / "forecast.zarr", folder]
-            candidates.extend(sorted(folder.glob("*.zarr"), key=lambda item: item.name.lower()))
-            store = next((candidate for candidate in candidates if _is_zarr_store(candidate)), None)
-            if store is None:
-                continue
+            stores: list[Path] = []
+            for current, directories, _files in os.walk(folder):
+                current_path = Path(current)
+                directories.sort(key=str.lower)
+                if _is_zarr_store(current_path):
+                    stores.append(current_path)
+                    directories.clear()
 
-            model_id = folder.name[:-5] if folder.name.lower().endswith(".zarr") else folder.name
-            if not model_id or model_id == "earth2":
-                continue
-            is_pangu = _is_pangu_store(store)
-            label = " ".join(
-                part.capitalize()
-                for part in model_id.replace("_", " ").replace("-", " ").split()
-            )
-            source_relative = store.relative_to(ROOT).as_posix()
-            MODELS[model_id] = {
-                **template,
-                "id": model_id,
-                "label": label,
-                "short": label,
-                "path": store,
-                "source_relative": source_relative,
-                "layout": "time_lead_lat_lon" if is_pangu else template["layout"],
-                "ensemble_size": 1 if is_pangu else template["ensemble_size"],
-                "has_ensemble": False if is_pangu else template["has_ensemble"],
-                "reconstruct_lat": (90.0, -90.0) if is_pangu else template["reconstruct_lat"],
-                "variables": PANGU_VARS if is_pangu else template["variables"],
-                "notes": [f"Local forecast store discovered in {source_relative}."],
-            }
-            discovered_ids.add(model_id)
+            for store in stores:
+                is_pangu = _is_pangu_store(store)
+                model_id = folder.name[:-5] if folder.name.lower().endswith(".zarr") else folder.name
+                if len(stores) > 1:
+                    suffix = store.relative_to(folder).with_suffix("").as_posix()
+                    suffix = suffix.replace("/", "_").replace(".", "_")
+                    model_id = f"{model_id}_{suffix}"
+                label = " ".join(
+                    part.capitalize()
+                    for part in model_id.replace("_", " ").replace("-", " ").split()
+                )
+                source_relative = store.relative_to(ROOT).as_posix()
+                discovered[model_id] = {
+                    **MODEL_TEMPLATE,
+                    "id": model_id,
+                    "label": label,
+                    "short": label,
+                    "path": store,
+                    "source_relative": source_relative,
+                    "layout": "time_lead_lat_lon" if is_pangu else MODEL_TEMPLATE["layout"],
+                    "ensemble_size": 1 if is_pangu else MODEL_TEMPLATE["ensemble_size"],
+                    "has_ensemble": False if is_pangu else MODEL_TEMPLATE["has_ensemble"],
+                    "reconstruct_lat": (90.0, -90.0) if is_pangu else MODEL_TEMPLATE["reconstruct_lat"],
+                    "variables": PANGU_VARS if is_pangu else MODEL_TEMPLATE["variables"],
+                    "absent": [],
+                    "notes": [f"Local forecast store discovered in {source_relative}."],
+                }
 
-    for model_id, model in list(MODELS.items()):
-        if model["source_relative"].startswith("models/") and model_id not in discovered_ids:
-            del MODELS[model_id]
+    MODELS.clear()
+    MODELS.update(discovered)
 
 
 app = FastAPI(title="Local showcase zarr field API")
@@ -589,10 +579,11 @@ def _model_regions(model: dict[str, Any]) -> dict[str, Any]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
+    _discover_models()
     return {
-        "ok": ZARR_PATH.exists(),
-        "zarr_path": str(ZARR_PATH),
-        "exists": ZARR_PATH.exists(),
+        "ok": bool(MODELS),
+        "project_root": str(ROOT),
+        "models": sorted(MODELS),
     }
 
 
@@ -612,12 +603,12 @@ def list_models() -> dict[str, Any]:
                 "default_region": m["default_region"],
             }
         )
-    default_model = next((item["id"] for item in items if item["available"]), "earth2")
+    default_model = next((item["id"] for item in items if item["available"]), "")
     return {"default": default_model, "models": items}
 
 
 @app.get("/api/meta")
-def meta(model: str = Query("earth2")) -> dict[str, Any]:
+def meta(model: str = Query(...)) -> dict[str, Any]:
     m = _get_model(model)
     lat, lon, lead_hours, init_utc = _open_coords(model)
     present_dirs = sorted(d.name for d in Path(m["path"]).iterdir() if d.is_dir())
@@ -819,7 +810,7 @@ def _nearest_index(axis: np.ndarray, value: float) -> int:
 
 @app.get("/api/timeseries")
 def timeseries(
-    model: str = Query("earth2"),
+    model: str = Query(...),
     variable: str = Query("t2m"),
     ensemble: str = Query("mean"),
     points: str = Query(
@@ -924,7 +915,7 @@ def timeseries(
 
 @app.get("/api/field")
 def field(
-    model: str = Query("earth2"),
+    model: str = Query(...),
     variable: str = Query("t2m"),
     region: str = Query("southeast_asia"),
     lead_hour: int = Query(0),
@@ -1106,6 +1097,6 @@ if __name__ == "__main__":
 
     import os
 
-    port = int(os.environ.get("ZARR_API_PORT", "8766"))
-    print(f"[zarr-api] Serving {ZARR_PATH} (exists={ZARR_PATH.exists()}) on :{port}")
+    port = int(os.environ.get("ZARR_API_PORT", "8767"))
+    print(f"[zarr-api] Serving models from {ROOT / 'models'} on :{port}")
     uvicorn.run(app, host="127.0.0.1", port=port, reload=False)
